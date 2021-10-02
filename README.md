@@ -2,4 +2,4 @@
 
 ## RRT* Algorithm
 
-![RRT* Results](assets/result.png)
+![RRT* Results](assets/results.png)
