@@ -445,6 +445,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "kd_tree"
+version = "0.1.0"
+dependencies = [
+ "nalgebra",
+ "ptree",
+]
+
+[[package]]
 name = "lazy_static"
 version = "0.2.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -895,10 +903,11 @@ name = "rrt"
 version = "0.1.0"
 dependencies = [
  "itertools",
+ "kd_tree",
  "nalgebra",
  "plotters",
- "ptree",
  "rand",
+ "vec_array",
 ]
 
 [[package]]
@@ -1130,6 +1139,10 @@ name = "unicode-xid"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ccb82d61f80a663efe1f787a51b16b5a51e3314d6ac365b08639f52387b33f3"
+
+[[package]]
+name = "vec_array"
+version = "0.1.0"
 
 [[package]]
 name = "version_check"
