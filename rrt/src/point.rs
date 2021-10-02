@@ -1,9 +1,10 @@
 use std::rc::Rc;
+use std::ops::Deref;
 use std::borrow::Borrow;
 
 use nalgebra as na;
 
-use crate::kd_tree::HasCoords;
+use crate::impl_node;
 
 #[derive(Debug, Clone)]
 pub struct Point<const N: usize>(pub Rc<PointData<N>>);
@@ -24,6 +25,14 @@ impl<'a, const N: usize> Borrow<na::Point<f32, N>> for &'a Point<N> {
     fn borrow(&self) -> &na::Point<f32, N> { (*self).borrow() }
 }
 
+impl<const N: usize> Deref for Point<N> {
+    type Target = na::Point<f32, N>;
+
+    fn deref(&self) -> &na::Point<f32, N> {
+        &self.0.p
+    }
+}
+
 impl<const N: usize> Point<N> {
     pub fn new(p: na::Point<f32, N>) -> Point<N> {
         Point(Rc::new(PointData { p, connected: None }))
@@ -41,18 +50,12 @@ impl<const N: usize> Point<N> {
     pub fn ptr_eq(&self, other: &Point<N>) -> bool {
         Rc::ptr_eq(&self.0, &other.0)
     }
+
+    pub fn as_ptr(&self) -> *const PointData<N> {
+        Rc::as_ptr(&self.0)
+    }
 }
 
-impl<const N: usize> HasCoords<N> for Point<N> {
-    #[inline(always)]
-    fn get_axis(&self, axis: usize) -> Option<f32> {
-        if axis < N {
-            Some(self.0.p[axis])
-        } else {
-            None
-        }
-    }
-
-    #[inline(always)]
-    fn point(&self) -> na::Point<f32, N> { *self.borrow() }
+impl_node! {
+    impl HasCoords for Point;
 }
