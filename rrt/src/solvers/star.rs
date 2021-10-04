@@ -30,8 +30,8 @@ impl<const N: usize> RRTSolver<N> for RRTStarSolver {
             builder.get_max_steps(),
             builder.get_target_radius(),
             builder.get_update_radius(),
-            builder.get_num_nodes(),
-            0.05,
+            builder.get_max_iters(),
+            builder.get_sample_goal_prob(),
         )
     }
 }
@@ -130,7 +130,7 @@ fn rrt_solve<O: Obstacle<N>, const N: usize>(
     max_steps: usize,
     target_radius: f32,
     update_radius: f32,
-    num_nodes: usize,
+    max_iters: usize,
     sample_goal_prob: f32,
 ) -> RRTResult<RRTStarSolver, N> {
     assert!(update_radius > step_size, "update_radius must be bigger than step_size");
@@ -142,7 +142,7 @@ fn rrt_solve<O: Obstacle<N>, const N: usize>(
     let mut reached_idx = None;
     let mut iters = 0;
 
-    while iters < num_nodes {
+    while iters < max_iters {
         let rnd_point = if gen_random() > sample_goal_prob {
             gen_random_in_range(random_range.clone())
         } else {

@@ -19,7 +19,8 @@ pub struct RRTBuilder<S: RRTSolver<N>, O, const N: usize> {
     target_radius: Option<f32>,
     update_radius: Option<f32>,
     random_range: Range<Option<PointN<N>>>,
-    num_nodes: Option<usize>,
+    max_iters: Option<usize>,
+    sample_goal_prob: Option<f32>,
     _solver: PhantomData<S>,
 }
 
@@ -42,7 +43,8 @@ where
                 start: None,
                 end: None,
             },
-            num_nodes: None,
+            max_iters: None,
+            sample_goal_prob: None,
             _solver: PhantomData,
         }
     }
@@ -97,11 +99,16 @@ where
             .with_random_range_end(random_range.end)
     }
 
-    pub fn with_num_nodes(mut self, num_nodes: usize) -> Self {
-        self.num_nodes.replace(num_nodes);
+    pub fn with_max_iters(mut self, num_nodes: usize) -> Self {
+        self.max_iters.replace(num_nodes);
         self
     }
 
+    pub fn with_sample_goal_prob(mut self, prob: f32) -> Self {
+        assert!(prob >= 0.0 && prob <= 1.0, "probability must be between 0 and 1, but was {}", prob);
+        self.prob.replace(prob);
+        self
+    }
 
     pub fn solve(self) -> RRTResult<S, N> {
         S::rrt_solve(self)
@@ -169,8 +176,8 @@ where
         }
     }
 
-    pub fn get_num_nodes(&self) -> usize {
-        self.num_nodes
+    pub fn get_max_iters(&self) -> usize {
+        self.max_iters
             .unwrap_or_else(|| {
                 let range = self.get_random_range();
                 let step_size = self.get_step_size();
@@ -179,6 +186,10 @@ where
                     .map(|(&s, &e)| ((e - s) / step_size) as usize)
                     .product()
             })
+    }
+
+    pub fn get_sample_goal_prob(&self) -> f32 {
+        self.sample_goal_prob.unwrap_or(0.1)
     }
 }
 

@@ -33,7 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_step_size(1.0)
         .with_target_radius(1.0)
         .with_max_stepping(1)
-        .with_num_nodes(60_000)
+        .with_max_iters(60_000)
         .with_update_radius(10.0)
         .with_random_range_start(point2(0.0, 0.0))
         .with_random_range_end(point2(130.0, 130.0))

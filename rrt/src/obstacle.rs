@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use nalgebra as na;
 
 // NOTE: currently the value used for scalar values is an f32, but this could be made
@@ -33,6 +35,11 @@ pub trait RayCollider<const N: usize> {
 
 pub trait DistanceToPoint<const N: usize> {
     fn distance_to_point(&self, point: na::Point<f32, N>) -> Option<f32>;
+}
+
+pub trait Convex<const N: usize> {}
+pub trait FaceNormal<const N: usize> {
+    fn face_normals(&self) -> Cow<'_, [na::SVector<f32, N>]>;
 }
 
 #[repr(transparent)]
