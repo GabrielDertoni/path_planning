@@ -1,1 +1,6 @@
 /target
+rrt_reference
+flamegraph.svg
+massif*
+perf*
+heap_usage
