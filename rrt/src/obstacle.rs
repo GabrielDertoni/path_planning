@@ -2,6 +2,8 @@ use std::borrow::Cow;
 
 use nalgebra as na;
 
+use crate::utils::*;
+
 // NOTE: currently the value used for scalar values is an f32, but this could be made
 //       generic in the future.
 
@@ -34,7 +36,7 @@ pub trait RayCollider<const N: usize> {
 }
 
 pub trait DistanceToPoint<const N: usize> {
-    fn distance_to_point(&self, point: na::Point<f32, N>) -> Option<f32>;
+    fn distance_to_point(&self, point: na::Point<f32, N>) -> f32;
 }
 
 pub trait Convex<const N: usize> {}
@@ -45,21 +47,21 @@ pub trait FaceNormal<const N: usize> {
 #[repr(transparent)]
 pub struct RayMarching<T>(pub T);
 
-impl<T, C, const N: usize> RayCollider for RayMarching<C>
+impl<T, C, const N: usize> RayCollider<N> for RayMarching<C>
 where
     C: Iterator<Item = T> + Clone,
     T: DistanceToPoint<N>,
 {
     fn ray_cast(&self, ray: Ray<N>) -> Option<HitRecord<N>> {
-        let mut param = 0;
+        let mut param = 0.0;
         let mut curr = ray.origin;
         let mut min_dist = f32::INFINITY;
 
-        while min_dist > 1e-3 && (0..1e4).contains(param) {
+        while min_dist > 1e-3 && (0.0..1e4).contains(&param) {
             min_dist = self.0
                 .clone()
-                .map(|el| el.distance_to_point(curr))
-                .min()?;
+                .map(|el| el.distance_to_point(curr).to_ord())
+                .min()?.0;
             
             curr += ray.dir * min_dist;
             param += min_dist;
@@ -97,10 +99,6 @@ where
     fn is_inside(&self, p: &na::Point<f32, N>) -> bool {
         (**self).is_inside(p)
     }
-    #[inline(always)]
-    fn get_bounding_box(&self) -> BBox<N> {
-        (**self).get_bounding_box()
-    }
 }
 
 impl<const N: usize> Obstacle<N> for &dyn Obstacle<N> {
@@ -108,20 +106,12 @@ impl<const N: usize> Obstacle<N> for &dyn Obstacle<N> {
     fn is_inside(&self, p: &na::Point<f32, N>) -> bool {
         (**self).is_inside(p)
     }
-    #[inline(always)]
-    fn get_bounding_box(&self) -> BBox<N> {
-        (**self).get_bounding_box()
-    }
 }
 
 impl<const N: usize> Obstacle<N> for Box<dyn Obstacle<N>> {
     #[inline(always)]
     fn is_inside(&self, p: &na::Point<f32, N>) -> bool {
         (**self).is_inside(p)
-    }
-    #[inline(always)]
-    fn get_bounding_box(&self) -> BBox<N> {
-        (**self).get_bounding_box()
     }
 }
 
@@ -161,7 +151,7 @@ impl<const N: usize> Bounded<N> for BBox<N> {
     }
 }
 
-impl<const N: usize> SampleValid for BBox<N> {
+impl<const N: usize> SampleValid<N> for BBox<N> {
     fn sample_valid(&self) -> Option<na::Point<f32, N>> {
         None
     }
@@ -202,11 +192,6 @@ impl<const N: usize> Obstacle<N> for Sphere<N> {
     fn is_inside(&self, p: &na::Point<f32, N>) -> bool {
         na::distance_squared(&self.center, p) <= self.radius
     }
-
-    fn get_bounding_box(&self) -> BBox<N> {
-        let n_dim_radius = na::SVector::<f32, N>::repeat(self.radius);
-        BBox::new(self.center - n_dim_radius, self.center + n_dim_radius)
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -226,9 +211,5 @@ impl<const N: usize> Obstacle<N> for Rectangle<N> {
         itertools::izip!(p.iter(), self.corner.iter(), self.size.iter()).all(
             |(&p_coord, &corner_coord, &sz)| (corner_coord..corner_coord + sz).contains(&p_coord),
         )
-    }
-
-    fn get_bounding_box(&self) -> BBox<N> {
-        BBox::new(self.corner, self.corner + self.size)
     }
 }

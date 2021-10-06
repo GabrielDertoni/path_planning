@@ -2,20 +2,25 @@ use std::borrow::Borrow;
 use std::ops::Range;
 use std::cell::{ RefCell, Ref, RefMut };
 use std::iter::IntoIterator;
-use std::collections::VecDeque;
 
 use nalgebra as na;
 
 use kd_tree::{ KDTree, HasCoords };
+use vec_array::*;
 use crate::{Path, RRTGraph, RRTResult, impl_node };
 use crate::solvers::RRTSolver;
 use crate::builder::RRTBuilder;
 use crate::obstacle::Obstacle;
 use crate::utils::*;
 
-/// An RRT* solver that is fast, but uses more memory then it's counterparts. This drawback
-/// is because each node has to have a reference to each of it's children in a dynamically
-/// allocated vector.
+const MAX_NEIGHBORS: usize = 10;
+
+/// An RRT* solver that is somewhat fast, but may be innacurate with respect to the cost of
+/// getting to the goal. This happens because only a constant number of closest neighbors are
+/// stored for each node, meaning that it is possible that a node is connected to a parent
+/// but the parent doesn't have a reference to this neighbor. This means that if the parent
+/// is updated, it will not update the child's cost, even though the path through the child
+/// now has a different cost.
 pub struct RRTStarSolver;
 
 impl<const N: usize> RRTSolver<N> for RRTStarSolver {
@@ -51,16 +56,14 @@ impl_node! {
 #[derive(Clone, Debug)]
 pub struct NodeInner {
     cost: f32,
-    children: Vec<usize>,
+    neighbors: Sorted<VecArray<usize, MAX_NEIGHBORS>>,
     pub connected: Option<usize>,
+
 }
 
 impl<const N: usize> Node<N> {
     pub fn cost(&self) -> f32 { self.inner().borrow().cost }
     pub fn connected(&self) -> Option<usize> { self.inner().borrow().connected }
-    pub fn children(&self) -> Ref<'_, [usize]> {
-        Ref::map(self.inner(), |inner| inner.children.as_slice())
-    }
 }
 
 impl<const N: usize> Node<N> {
@@ -68,13 +71,13 @@ impl<const N: usize> Node<N> {
         Node {
             p,
             inner: RefCell::new(NodeInner {
-                children: Vec::new(),
+                neighbors: VecArray::new_sorted(),
                 cost: 0.0, connected: None
             }),
         }
     }
 
-    fn new<I>(p: na::Point<f32, N>, cost: f32, connected: usize, children: I) -> Self
+    fn new<I>(p: na::Point<f32, N>, cost: f32, connected: usize, neighbors: I, tree: &KDTree<Self, N>) -> Self
     where
         I: IntoIterator<Item = usize>,
     {
@@ -82,13 +85,13 @@ impl<const N: usize> Node<N> {
             p,
             inner: RefCell::new(NodeInner {
                 cost,
-                children: Vec::new(),
+                neighbors: VecArray::new_sorted(),
                 connected: Some(connected),
             }),
         };
 
-        for child in children {
-            node.add_child(child);
+        for neighbor in neighbors {
+            node.add_neighbor(neighbor, tree);
         }
 
         node
@@ -102,21 +105,20 @@ impl<const N: usize> Node<N> {
         self.inner.borrow_mut()
     }
 
-    fn children_ref(&self) -> Ref<Vec<usize>> {
-        Ref::map(self.inner(), |inner| &inner.children)
+    fn connected_mut(&self) -> RefMut<Option<usize>> {
+        RefMut::map(self.inner_mut(), |inner| &mut inner.connected)
     }
 
-    fn add_child(&self, child: usize) {
-        self.inner_mut().children.push(child);
+    fn neighbors_ref(&self) -> Ref<Sorted<VecArray<usize, MAX_NEIGHBORS>>> {
+        Ref::map(self.inner(), |inner| &inner.neighbors)
     }
 
-    fn remove_child(&self, child: usize) {
-        let children = &mut self.inner_mut().children;
-        let idx = children.iter()
-            .position(|&el| el == child)
-            .expect("child not found");
-
-        children.swap_remove(idx);
+    fn add_neighbor(&self, neighbor: usize, tree: &KDTree<Self, N>) {
+        let p = self.borrow();
+        self.inner_mut().neighbors.push_evict_max_by_key(neighbor, |&el| {
+            let neighbor_point = tree.get_point(el).borrow();
+            OrdF32(na::distance(p, neighbor_point))
+        });
     }
 }
 
@@ -137,7 +139,7 @@ fn rrt_solve<O: Obstacle<N>, const N: usize>(
     max_iters: usize,
     sample_goal_prob: f32,
 ) -> RRTResult<RRTStarSolver, N> {
-    assert!(update_radius >= step_size, "update_radius must be bigger than step_size");
+    assert!(update_radius > step_size, "update_radius must be bigger than step_size");
 
     let from: Node<N> = Node::new_root(from).into();
     let mut point_tree: KDTree<Node<N>, N> = KDTree::new();
@@ -176,15 +178,10 @@ fn rrt_solve<O: Obstacle<N>, const N: usize>(
             let min_cost_idx = within_radius
                 .iter()
                 .copied()
-                .filter(|&i| {
-                    let p = point_tree.get_point(i);
-                    let d = na::distance(p.borrow(), &next_step);
-                    d <= step_size
-                })
                 .min_by_key(|&i| {
                     let p = point_tree.get_point(i);
                     let d = na::distance(p.borrow(), &next_step);
-                    (d + p.cost()).to_ord()
+                    OrdF32(d + p.cost())
                 })
                 .unwrap_or(nearest_idx);
 
@@ -195,19 +192,23 @@ fn rrt_solve<O: Obstacle<N>, const N: usize>(
                 next_step,
                 cost,
                 min_cost_idx,
-                std::iter::empty(),
+                within_radius.iter().cloned(),
+                &point_tree,
             );
             let node_idx = point_tree.insert(step_point.clone());
 
-            point_tree.get_point(min_cost_idx).add_child(node_idx);
+            for &point in &within_radius {
+                let neighbor = point_tree.get_point(point);
+                neighbor.add_neighbor(node_idx, &point_tree);
+            }
 
-            rewire(node_idx, within_radius, &point_tree, step_size);
+            rewire(node_idx, &point_tree);
 
             if na::distance_squared(step_point.borrow(), &to) <= target_radius * target_radius {
                 reached_idx = reached_idx.iter()
                     .copied()
                     .chain(std::iter::once(node_idx))
-                    .min_by_key(|&i| point_tree.get_point(i).cost().to_ord());
+                    .min_by_key(|&i| OrdF32(point_tree.get_point(i).cost()));
             }
 
             direction = (rnd_point.point() - step_point.point()).cap_magnitude(step_size);
@@ -225,6 +226,7 @@ fn rrt_solve<O: Obstacle<N>, const N: usize>(
                 cost,
                 reached_idx,
                 std::iter::empty(),
+                &point_tree,
             )
         );
 
@@ -292,41 +294,29 @@ fn rrt_solve<O: Obstacle<N>, const N: usize>(
 ///
 /// NOTE: If something goes wrong with the logic, it could cause a cycle in the graph.
 ///
-fn rewire<I, const N: usize>(node_idx: usize, near: I, tree: &KDTree<Node<N>, N>, step_size: f32)
-where
-    I: IntoIterator<Item = usize>,
-{
+fn rewire<const N: usize>(node_idx: usize, tree: &KDTree<Node<N>, N>) {
     let node = tree.get_point(node_idx);
-    for neighbor_idx in near.into_iter() {
+    // If we find a cycle, the call to `neighbors_ref` will panic.
+    let near = node.neighbors_ref();
+    for &neighbor_idx in near.iter() {
         let neighbor = tree.get_point(neighbor_idx);
         let old_to_new = na::distance(neighbor.borrow(), node.borrow());
-        if old_to_new <= step_size && neighbor.cost() > old_to_new + node.cost() {
-            let cost_delta = neighbor.cost() - (old_to_new + node.cost());
-            // This scope is for the lifetime of the `RefMut`
-            {
-                let mut inner = neighbor.inner_mut();
-                if let Some(old_parent_idx) = inner.connected.replace(node_idx) {
-                    let old_parent = tree.get_point(old_parent_idx);
-                    old_parent.remove_child(neighbor_idx);
-                }
-                inner.cost -= cost_delta;
-                node.add_child(neighbor_idx);
-            }
-            propagate_cost_update(neighbor_idx, cost_delta, tree);
+        if old_to_new + node.cost() < neighbor.cost() {
+            let mut neighbor = neighbor.inner_mut();
+            neighbor.connected.replace(node_idx);
+            neighbor.cost = old_to_new + node.cost();
+            rewire(neighbor_idx, tree);
         }
     }
 }
 
-fn propagate_cost_update<const N: usize>(node_idx: usize, cost_delta: f32, tree: &KDTree<Node<N>, N>) {
-    let mut stack = VecDeque::new();
-    stack.push_back(node_idx);
-
-    while let Some(node_idx) = stack.pop_back() {
-        let node = tree.get_point(node_idx);
-        for &child_idx in node.children_ref().iter() {
-            let child = tree.get_point(child_idx);
-            child.inner_mut().cost -= cost_delta;
-            stack.push_back(child_idx);
-        }
+/*
+fn calc_cost<const N: usize>(p: &na::Point<f32, N>, connected: usize, tree: &KDTree<Node<N>, N>) -> f32 {
+    let mut prev = tree.get_at(connected);
+    let mut cost = na::distance(&p, prev.borrow());
+    while let Some(next) = prev.connected.map(|c| tree.get_at(c)) {
+        cost += na::distance(prev.borrow(), next.borrow());
     }
+    cost
 }
+*/

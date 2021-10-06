@@ -1,10 +1,8 @@
 #![allow(dead_code)]
 
 use std::cell::RefCell;
-use std::mem::MaybeUninit;
-use std::ops::{ Deref, DerefMut, Drop, Range };
-use std::convert::identity as id;
-use std::fmt::{ self, Debug };
+use std::ops::Range;
+use std::fmt::Debug;
 
 use rand::prelude::*;
 use nalgebra as na;
@@ -35,12 +33,26 @@ pub(crate) fn gen_random_in_range<const N: usize>(range: Range<na::Point<f32, N>
 }
 
 #[derive(Debug, PartialEq, PartialOrd)]
-pub struct OrdF32(pub f32);
+pub struct PartialOrdUnwrap<T>(pub T);
 
-impl std::cmp::Eq for OrdF32 {}
+impl<T: PartialOrd> std::cmp::Eq for PartialOrdUnwrap<T> {}
 
-impl std::cmp::Ord for OrdF32 {
+impl<T: PartialOrd> std::cmp::Ord for PartialOrdUnwrap<T> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.partial_cmp(other).unwrap()
+    }
+}
+
+pub(crate) trait ToOrd: PartialOrd {
+    type OrdTy: Ord;
+
+    fn to_ord(self) -> Self::OrdTy;
+}
+
+impl<T: PartialOrd> ToOrd for T {
+    type OrdTy = PartialOrdUnwrap<T>;
+
+    fn to_ord(self) -> PartialOrdUnwrap<T> {
+        PartialOrdUnwrap(self)
     }
 }

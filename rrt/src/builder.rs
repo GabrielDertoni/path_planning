@@ -106,7 +106,12 @@ where
 
     pub fn with_sample_goal_prob(mut self, prob: f32) -> Self {
         assert!(prob >= 0.0 && prob <= 1.0, "probability must be between 0 and 1, but was {}", prob);
-        self.prob.replace(prob);
+        self.sample_goal_prob.replace(prob);
+        self
+    }
+
+    pub fn with_update_radius(mut self, radius: f32) -> Self {
+        self.update_radius.replace(radius);
         self
     }
 
@@ -191,6 +196,10 @@ where
     pub fn get_sample_goal_prob(&self) -> f32 {
         self.sample_goal_prob.unwrap_or(0.1)
     }
+
+    pub fn get_update_radius(&self) -> f32 {
+        self.update_radius.unwrap_or(self.get_step_size() * 2.0)
+    }
 }
 
 impl<O, const N: usize> RRTBuilder<RRTSimpleSolver, O, N>
@@ -206,17 +215,6 @@ where
     /// compiler that this builder has to have solver type `RRTSimpleSolver`.
     #[inline(always)]
     pub fn as_simple(self) -> Self { self }
-}
-
-impl<O: Obstacle<N>, const N: usize> RRTBuilder<RRTStarSolver, O, N> {
-    pub fn with_update_radius(mut self, radius: f32) -> Self {
-        self.update_radius.replace(radius);
-        self
-    }
-
-    pub fn get_update_radius(&self) -> f32 {
-        self.update_radius.unwrap_or(self.get_step_size() * 2.0)
-    }
 }
 
 impl<S: RRTSolver<N>, const N: usize> RRTBuilder<S, Box<dyn Obstacle<N>>, N> {

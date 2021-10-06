@@ -1,11 +1,12 @@
-use std::collections::HashSet;
 use std::borrow::Borrow;
+use std::collections::HashSet;
 use std::env;
 
-use plotters::prelude::*;
 use nalgebra as na;
+use plotters::prelude::*;
 
-use rrt::{obstacle as obs, RRTBuilder, RRTStarSolver};
+use kd_tree::HasCoords;
+use rrt::{obstacle as obs, RRTBuilder, RRTStarConnectSolver};
 
 fn point2(x: f32, y: f32) -> na::Point2<f32> {
     na::Point2::new(x, y)
@@ -16,14 +17,12 @@ fn vec2(x: f32, y: f32) -> na::Vector2<f32> {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-
     let max_iters = env::args()
         .position(|arg| arg == "--max-iters" || arg == "-i")
         .and_then(|pos| env::args().nth(pos + 1)?.parse().ok())
         .unwrap_or(5_000);
 
-    let plot = env::args()
-        .any(|arg| arg == "--plot" || arg == "-p");
+    let plot = env::args().any(|arg| arg == "--plot" || arg == "-p");
 
     let soft_red = RGBColor(200, 50, 50);
 
@@ -37,7 +36,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let target = point2(5.0, 5.0);
     let origin = point2(65.0, 65.0);
 
-    let res = RRTBuilder::<RRTStarSolver, _, 2>::new(origin, target)
+    let res = RRTBuilder::<RRTStarConnectSolver, _, 2>::new(origin, target)
         .extend_obstacles(obstacles)
         .with_step_size(1.0)
         .with_target_radius(1.0)
@@ -48,25 +47,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_random_range_end(point2(130.0, 130.0))
         .solve();
 
-    if plot {
-        eprintln!("Used {} points", res.n_points);
+    eprintln!("Used {} points", res.n_points);
 
-        if let Some(rrt::Path { cost: Some(cost), .. }) = &res.result {
-            println!("Cost: {}", cost);
+    if let Some(rrt::Path {
+        cost: Some(cost), ..
+    }) = &res.result
+    {
+        println!("Cost: {}", cost);
 
-            let mut avg = 0.0;
-            let mut max = 0;
-            for node in &res.graph.points {
-                let n_children = node.children().len();
-                avg += n_children as f32;
-                if n_children > max {
-                    max = n_children;
-                }
+        let mut avg = 0.0;
+        let mut max = 0;
+        for node in &res.graph.points {
+            let n_children = node.children().len();
+            avg += n_children as f32;
+            if n_children > max {
+                max = n_children;
             }
-            println!("Average number of children is {}", avg / res.graph.points.len() as f32);
-            println!("Max number of children is {}", max);
         }
+        println!(
+            "Average number of children is {}",
+            avg / res.graph.points.len() as f32
+        );
+        println!("Max number of children is {}", max);
+    }
 
+    if plot {
         let root = BitMapBackend::new("test.png", (1300, 1300)).into_drawing_area();
 
         root.fill(&WHITE)?;
@@ -74,8 +79,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for rect in obstacles {
             root.draw(&Rectangle::new(
                 [
-                    ((rect.corner[0] * 10.0) as i32, (rect.corner[1] * 10.0) as i32),
-                    (((rect.corner[0] + rect.size[0]) * 10.0) as i32, ((rect.corner[1] + rect.size[1]) * 10.0) as i32)
+                    (
+                        (rect.corner[0] * 10.0) as i32,
+                        (rect.corner[1] * 10.0) as i32,
+                    ),
+                    (
+                        ((rect.corner[0] + rect.size[0]) * 10.0) as i32,
+                        ((rect.corner[1] + rect.size[1]) * 10.0) as i32,
+                    ),
                 ],
                 ShapeStyle::from(&soft_red).filled(),
             ))?;
@@ -95,11 +106,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let mut vis = HashSet::new();
 
-        for point in &res.graph.points {
-            let mut curr_point = point;
+        for (point_idx, point) in res.graph.points.iter().enumerate() {
+            let mut curr = Some(point_idx);
             let mut series = Vec::new();
 
-            while let Some(prev) = curr_point.connected().clone() {
+            while let Some(prev) = curr {
                 let node = &res.graph.points[prev];
                 let p: &na::Point<f32, 2> = node.borrow();
                 series.push(((p[0] * 10.0) as i32, (p[1] * 10.0) as i32));
@@ -109,16 +120,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
 
                 vis.insert(prev);
-                curr_point = node;
+                curr = node.parent()
             }
 
-            let color = RGBColor(0, 0, 0).mix(0.5);
+            let from_origin_style = ShapeStyle::from(MAGENTA.mix(0.8))
+                .filled()
+                .stroke_width(2);
+
+            let from_target_style = ShapeStyle::from(RGBColor(120, 200, 0).mix(0.8))
+                .filled()
+                .stroke_width(2);
+
+            let style = if point.grows_from_target() {
+                from_target_style
+            } else {
+                from_origin_style
+            };
 
             if series.len() > 0 {
-                root.draw(&PathElement::new( 
-                    series.clone(),
-                    ShapeStyle::from(&color).filled(),
-                ))?;
+                root.draw(&PathElement::new(series.clone(), style))?;
             }
         }
 
@@ -129,12 +149,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let path = res.result.unwrap();
 
-        let series: Vec<_> = path.waypoints
+        let series: Vec<_> = path
+            .waypoints
             .into_iter()
             .map(|p| ((p.x * 10.0) as i32, (p.y * 10.0) as i32))
             .collect();
 
-        root.draw(&PathElement::new( 
+        root.draw(&PathElement::new(
             series.clone(),
             ShapeStyle::from(&BLUE).filled().stroke_width(3),
         ))?;

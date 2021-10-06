@@ -1,6 +1,7 @@
 #![feature(slice_index_methods)]
 
 pub mod obstacle;
+pub mod environment;
 pub mod point;
 pub mod solvers;
 pub mod builder;
