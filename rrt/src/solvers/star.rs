@@ -1,17 +1,17 @@
 use std::borrow::Borrow;
-use std::ops::Range;
-use std::cell::{ RefCell, Ref, RefMut };
-use std::iter::IntoIterator;
+use std::cell::{Ref, RefCell, RefMut};
 use std::collections::VecDeque;
+use std::iter::IntoIterator;
+use std::ops::Range;
 
 use nalgebra as na;
 
-use kd_tree::{ KDTree, HasCoords };
-use crate::{Path, RRTGraph, RRTResult, impl_node };
-use crate::solvers::RRTSolver;
 use crate::builder::RRTBuilder;
 use crate::obstacle::Obstacle;
+use crate::solvers::RRTSolver;
 use crate::utils::*;
+use crate::{impl_node, Path, RRTGraph, RRTResult};
+use kd_tree::{HasCoords, KDTree};
 
 /// An RRT* solver that is fast, but uses more memory then it's counterparts. This drawback
 /// is because each node has to have a reference to each of it's children in a dynamically
@@ -56,8 +56,12 @@ pub struct NodeInner {
 }
 
 impl<const N: usize> Node<N> {
-    pub fn cost(&self) -> f32 { self.inner().borrow().cost }
-    pub fn connected(&self) -> Option<usize> { self.inner().borrow().connected }
+    pub fn cost(&self) -> f32 {
+        self.inner().borrow().cost
+    }
+    pub fn connected(&self) -> Option<usize> {
+        self.inner().borrow().connected
+    }
     pub fn children(&self) -> Ref<'_, [usize]> {
         Ref::map(self.inner(), |inner| inner.children.as_slice())
     }
@@ -69,7 +73,8 @@ impl<const N: usize> Node<N> {
             p,
             inner: RefCell::new(NodeInner {
                 children: Vec::new(),
-                cost: 0.0, connected: None
+                cost: 0.0,
+                connected: None,
             }),
         }
     }
@@ -112,7 +117,8 @@ impl<const N: usize> Node<N> {
 
     fn remove_child(&self, child: usize) {
         let children = &mut self.inner_mut().children;
-        let idx = children.iter()
+        let idx = children
+            .iter()
             .position(|&el| el == child)
             .expect("child not found");
 
@@ -122,7 +128,9 @@ impl<const N: usize> Node<N> {
 
 impl<const N: usize> Borrow<na::Point<f32, N>> for Node<N> {
     #[inline]
-    fn borrow(&self) -> &na::Point<f32, N> { &self.p }
+    fn borrow(&self) -> &na::Point<f32, N> {
+        &self.p
+    }
 }
 
 fn rrt_solve<O: Obstacle<N>, const N: usize>(
@@ -137,7 +145,10 @@ fn rrt_solve<O: Obstacle<N>, const N: usize>(
     max_iters: usize,
     sample_goal_prob: f32,
 ) -> RRTResult<RRTStarSolver, N> {
-    assert!(update_radius >= step_size, "update_radius must be bigger than step_size");
+    assert!(
+        update_radius >= step_size,
+        "update_radius must be bigger than step_size"
+    );
 
     let from: Node<N> = Node::new_root(from).into();
     let mut point_tree: KDTree<Node<N>, N> = KDTree::new();
@@ -157,7 +168,8 @@ fn rrt_solve<O: Obstacle<N>, const N: usize>(
         let nearest = point_tree.get_point(nearest_idx);
 
         // Stepping
-        let mut direction: na::SVector<f32, N>  = (rnd_point.point() - nearest.point()).cap_magnitude(step_size);
+        let mut direction: na::SVector<f32, N> =
+            (rnd_point.point() - nearest.point()).cap_magnitude(step_size);
         let mut step_point = nearest.clone();
         let mut i = 0;
         while direction.magnitude() > f32::EPSILON && i < max_steps {
@@ -191,12 +203,7 @@ fn rrt_solve<O: Obstacle<N>, const N: usize>(
             let min_cost = point_tree.get_point(min_cost_idx);
 
             let cost = min_cost.cost() + na::distance(min_cost.borrow(), &next_step);
-            step_point = Node::new(
-                next_step,
-                cost,
-                min_cost_idx,
-                std::iter::empty(),
-            );
+            step_point = Node::new(next_step, cost, min_cost_idx, std::iter::empty());
             let node_idx = point_tree.insert(step_point.clone());
 
             point_tree.get_point(min_cost_idx).add_child(node_idx);
@@ -204,7 +211,8 @@ fn rrt_solve<O: Obstacle<N>, const N: usize>(
             rewire(node_idx, within_radius, &point_tree, step_size);
 
             if na::distance_squared(step_point.borrow(), &to) <= target_radius * target_radius {
-                reached_idx = reached_idx.iter()
+                reached_idx = reached_idx
+                    .iter()
                     .copied()
                     .chain(std::iter::once(node_idx))
                     .min_by_key(|&i| point_tree.get_point(i).cost().to_ord());
@@ -214,19 +222,12 @@ fn rrt_solve<O: Obstacle<N>, const N: usize>(
             i += 1;
         }
         iters += 1;
-    };
+    }
 
     let result = if let Some(reached_idx) = reached_idx {
         let reached = point_tree.get_point(reached_idx);
         let cost = reached.cost() + na::distance(reached.borrow(), &to);
-        let to_idx = point_tree.insert(
-            Node::new(
-                to,
-                cost,
-                reached_idx,
-                std::iter::empty(),
-            )
-        );
+        let to_idx = point_tree.insert(Node::new(to, cost, reached_idx, std::iter::empty()));
 
         let to = point_tree.get_point(to_idx);
 
@@ -245,13 +246,7 @@ fn rrt_solve<O: Obstacle<N>, const N: usize>(
         None
     };
 
-    let graph = RRTGraph::new(
-        point_tree.iter()
-            .cloned()
-            .collect(),
-        from,
-    );
-    
+    let graph = RRTGraph::new(point_tree.iter().cloned().collect(), from);
     RRTResult {
         n_points: point_tree.size(),
         graph,
@@ -317,7 +312,11 @@ where
     }
 }
 
-fn propagate_cost_update<const N: usize>(node_idx: usize, cost_delta: f32, tree: &KDTree<Node<N>, N>) {
+fn propagate_cost_update<const N: usize>(
+    node_idx: usize,
+    cost_delta: f32,
+    tree: &KDTree<Node<N>, N>,
+) {
     let mut stack = VecDeque::new();
     stack.push_back(node_idx);
 
@@ -328,5 +327,168 @@ fn propagate_cost_update<const N: usize>(node_idx: usize, cost_delta: f32, tree:
             child.inner_mut().cost -= cost_delta;
             stack.push_back(child_idx);
         }
+    }
+}
+
+pub struct RRTStarIter<O, const N: usize> {
+    pub from: Node<N>,
+    pub to: na::Point<f32, N>,
+    pub obstacles: Vec<O>,
+    pub random_range: Range<na::Point<f32, N>>,
+    pub step_size: f32,
+    pub max_steps: usize,
+    pub target_radius: f32,
+    pub update_radius: f32,
+    pub max_iters: usize,
+    pub sample_goal_prob: f32,
+    pub kd_tree: KDTree<Node<N>, N>,
+    pub iters: usize,
+    pub reached_idx: Option<usize>,
+}
+
+impl<O: Obstacle<N>, const N: usize> RRTStarIter<O, N> {
+    pub fn new(
+        from: na::Point<f32, N>,
+        to: na::Point<f32, N>,
+        obstacles: Vec<O>,
+        random_range: Range<na::Point<f32, N>>,
+        step_size: f32,
+        max_steps: usize,
+        target_radius: f32,
+        update_radius: f32,
+        max_iters: usize,
+        sample_goal_prob: f32,
+    ) -> Self {
+        assert!(
+            update_radius >= step_size,
+            "update_radius must be bigger than step_size"
+        );
+
+        let mut kd_tree = KDTree::new();
+        let from: Node<N> = Node::new_root(from).into();
+        kd_tree.insert(from.clone());
+
+        RRTStarIter {
+            from,
+            to,
+            obstacles,
+            random_range,
+            step_size,
+            max_steps,
+            target_radius,
+            update_radius,
+            max_iters,
+            sample_goal_prob,
+            kd_tree,
+            iters: 0,
+            reached_idx: None,
+        }
+    }
+
+    pub fn from_builder(mut builder: RRTBuilder<RRTStarSolver, O, N>) -> Self {
+        Self::new(
+            builder.get_from(),
+            builder.get_to(),
+            std::mem::take(&mut builder.obstacles),
+            builder.get_random_range(),
+            builder.get_step_size(),
+            builder.get_max_steps(),
+            builder.get_target_radius(),
+            builder.get_update_radius(),
+            builder.get_max_iters(),
+            builder.get_sample_goal_prob(),
+        )
+    }
+}
+
+impl<O: Obstacle<N>, const N: usize> Iterator for RRTStarIter<O, N> {
+    type Item = ();
+
+    fn next(&mut self) -> Option<()> {
+        let &mut RRTStarIter {
+            to,
+            ref mut obstacles,
+            ref mut random_range,
+            step_size,
+            max_steps,
+            target_radius,
+            update_radius,
+            max_iters,
+            sample_goal_prob,
+            ref mut kd_tree,
+            ref mut iters,
+            ref mut reached_idx,
+            ..
+        } = self;
+
+        if *iters >= max_iters {
+            return None;
+        }
+        let rnd_point = if gen_random() > sample_goal_prob {
+            gen_random_in_range(random_range.clone())
+        } else {
+            to
+        };
+
+        let nearest_idx = kd_tree.find_index_nearest(&rnd_point).unwrap();
+        let nearest = kd_tree.get_point(nearest_idx);
+
+        // Stepping
+        let mut direction: na::SVector<f32, N> =
+            (rnd_point.point() - nearest.point()).cap_magnitude(step_size);
+        let mut step_point = nearest.clone();
+        let mut i = 0;
+        while direction.magnitude() > f32::EPSILON && i < max_steps {
+            let next_step = step_point.point() + direction;
+
+            // If the step point is inside any obstacle, we abandon this stepping direction.
+            // NOTE: This may be a performance bottleneck. Could probably be inproved with something like
+            // an AABB Tree.
+            if obstacles.iter().any(|o| o.is_inside(&next_step)) {
+                break;
+            }
+
+            let within_radius = kd_tree.find_indices_within_radius(&next_step, update_radius);
+
+            // Find the minimum cost point P such that dist(P, next_step) + cost(P) is minimized.
+            let min_cost_idx = within_radius
+                .iter()
+                .copied()
+                .filter(|&i| {
+                    let p = kd_tree.get_point(i);
+                    let d = na::distance(p.borrow(), &next_step);
+                    d <= step_size
+                })
+                .min_by_key(|&i| {
+                    let p = kd_tree.get_point(i);
+                    let d = na::distance(p.borrow(), &next_step);
+                    (d + p.cost()).to_ord()
+                })
+                .unwrap_or(nearest_idx);
+
+            let min_cost = kd_tree.get_point(min_cost_idx);
+
+            let cost = min_cost.cost() + na::distance(min_cost.borrow(), &next_step);
+            step_point = Node::new(next_step, cost, min_cost_idx, std::iter::empty());
+            let node_idx = kd_tree.insert(step_point.clone());
+
+            kd_tree.get_point(min_cost_idx).add_child(node_idx);
+
+            rewire(node_idx, within_radius, &kd_tree, step_size);
+
+            if na::distance_squared(step_point.borrow(), &to) <= target_radius * target_radius {
+                *reached_idx = reached_idx
+                    .iter()
+                    .copied()
+                    .chain(std::iter::once(node_idx))
+                    .min_by_key(|&i| kd_tree.get_point(i).cost().to_ord());
+            }
+
+            direction = (rnd_point.point() - step_point.point()).cap_magnitude(step_size);
+            i += 1;
+        }
+        *iters += 1;
+
+        Some(())
     }
 }

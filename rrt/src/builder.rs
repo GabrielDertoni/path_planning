@@ -10,17 +10,17 @@ use crate::utils::*;
 use crate::solvers::*;
 
 pub struct RRTBuilder<S: RRTSolver<N>, O, const N: usize> {
-    from: PointN<N>,
-    to: PointN<N>,
-    graph: Option<RRTGraph<S, N>>,
-    obstacles: Vec<O>,
-    step_size: Option<f32>,
-    max_steps: usize,
-    target_radius: Option<f32>,
-    update_radius: Option<f32>,
-    random_range: Range<Option<PointN<N>>>,
-    max_iters: Option<usize>,
-    sample_goal_prob: Option<f32>,
+    pub(crate) from: PointN<N>,
+    pub(crate) to: PointN<N>,
+    pub(crate) graph: Option<RRTGraph<S, N>>,
+    pub(crate) obstacles: Vec<O>,
+    pub(crate) step_size: Option<f32>,
+    pub(crate) max_steps: usize,
+    pub(crate) target_radius: Option<f32>,
+    pub(crate) update_radius: Option<f32>,
+    pub(crate) random_range: Range<Option<PointN<N>>>,
+    pub(crate) max_iters: Option<usize>,
+    pub(crate) sample_goal_prob: Option<f32>,
     _solver: PhantomData<S>,
 }
 
