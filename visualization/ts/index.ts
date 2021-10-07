@@ -19,6 +19,7 @@ function main() {
     rrt.draw(canvas);
 
     max_iters_input.addEventListener("input", () => {
+        max_iters_display.innerHTML = max_iters_input.value;
         const max_iters = parseInt(max_iters_input.value);
         let has_changed = rrt.iters() < max_iters;
         while (rrt.iters() < max_iters) {
@@ -30,7 +31,6 @@ function main() {
     });
 
     max_iters_input.addEventListener("change", () => {
-        max_iters_display.innerHTML = max_iters_input.value;
         const max_iters = parseInt(max_iters_input.value);
 
         if (rrt.iters() > max_iters) {

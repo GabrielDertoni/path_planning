@@ -2,12 +2,14 @@
 <html>
   <head>
     <meta charset="UTF-8">
-    <title>My Rust + Webpack project!</title>
+    <title>RRT* Visualization</title>
     <link rel="stylesheet" href="style.css">
   </head>
   <body>
     <input type="range" min="200" max="200000" value="200" id="max-iters-input">
-    <p id="max-iters-display"></p>
+    <p class="iter-count">
+      Iterations: <span id="max-iters-display"></span>
+    </p>
     <canvas id="main-canvas"></canvas>
     <script src="bootstrap.js"></script>
   </body>
