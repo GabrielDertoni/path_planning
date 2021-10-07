@@ -11,7 +11,7 @@ use crate::obstacle::Obstacle;
 use crate::solvers::RRTSolver;
 use crate::utils::*;
 use crate::{impl_node, Path, RRTGraph, RRTResult};
-use kd_tree::{HasCoords, KDTree};
+use kd_tree::{HasCoords, KDTree, visitor::NearestIndexedVisitor};
 
 /// An RRT* solver that is fast, but uses more memory then it's counterparts. This drawback
 /// is because each node has to have a reference to each of it's children in a dynamically
@@ -164,8 +164,8 @@ fn rrt_solve<O: Obstacle<N>, const N: usize>(
             to
         };
 
-        let nearest_idx = point_tree.find_index_nearest(&rnd_point).unwrap();
-        let nearest = point_tree.get_point(nearest_idx);
+        let vis = NearestIndexedVisitor::new();
+        let (nearest_idx, nearest) = point_tree.query(&rnd_point, vis).unwrap();
 
         // Stepping
         let mut direction: na::SVector<f32, N> =
@@ -330,6 +330,7 @@ fn propagate_cost_update<const N: usize>(
     }
 }
 
+#[derive(Clone)]
 pub struct RRTStarIter<O, const N: usize> {
     pub from: Node<N>,
     pub to: na::Point<f32, N>,
@@ -430,8 +431,8 @@ impl<O: Obstacle<N>, const N: usize> Iterator for RRTStarIter<O, N> {
             to
         };
 
-        let nearest_idx = kd_tree.find_index_nearest(&rnd_point).unwrap();
-        let nearest = kd_tree.get_point(nearest_idx);
+        let vis = NearestIndexedVisitor::new();
+        let (nearest_idx, nearest) = kd_tree.query(&rnd_point, vis).unwrap();
 
         // Stepping
         let mut direction: na::SVector<f32, N> =
