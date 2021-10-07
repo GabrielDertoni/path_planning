@@ -37,6 +37,19 @@ pub struct RRTGraph<S: RRTSolver<N>, const N: usize> {
     origin: S::Node,
 }
 
+impl<S, const N: usize> Clone for RRTGraph<S, N>
+where
+    S: RRTSolver<N>,
+    S::Node: Clone,
+{
+    fn clone(&self) -> Self {
+        RRTGraph {
+            points: self.points.clone(),
+            origin: self.origin.clone(),
+        }
+    }
+}
+
 impl<S: RRTSolver<N>, const N: usize> RRTGraph<S, N> {
     fn new(points: Vec<S::Node>, origin: S::Node) -> Self {
         RRTGraph { points, origin }

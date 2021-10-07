@@ -24,6 +24,30 @@ pub struct RRTBuilder<S: RRTSolver<N>, O, const N: usize> {
     _solver: PhantomData<S>,
 }
 
+impl<S, O, const N: usize> Clone for RRTBuilder<S, O, N>
+where
+    S: RRTSolver<N>,
+    S::Node: Clone,
+    O: Clone,
+{
+    fn clone(&self) -> Self {
+        RRTBuilder {
+            from: self.from.clone(),
+            to: self.to.clone(),
+            graph: self.graph.clone(),
+            obstacles: self.obstacles.clone(),
+            step_size: self.step_size.clone(),
+            max_steps: self.max_steps.clone(),
+            target_radius: self.target_radius.clone(),
+            update_radius: self.update_radius.clone(),
+            random_range: self.random_range.clone(),
+            max_iters: self.max_iters.clone(),
+            sample_goal_prob: self.sample_goal_prob.clone(),
+            _solver: PhantomData,
+        }
+    }
+}
+
 impl<S, O, const N: usize> RRTBuilder<S, O, N>
 where
     O: Obstacle<N>,
