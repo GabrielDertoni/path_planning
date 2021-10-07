@@ -26,10 +26,12 @@ use rrt::{
 #[global_allocator]
 static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
-#[wasm_bindgen]
+#[wasm_bindgen(start)]
 pub fn init() {
     #[cfg(debug_assertions)]
     console_error_panic_hook::set_once();
+
+    console_log!("Hello from Rust!");
 }
 
 fn point2(x: f32, y: f32) -> na::Point2<f32> {

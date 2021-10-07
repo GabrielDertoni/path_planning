@@ -1,3 +1,4 @@
+/*
 import { RRTAlgorithm } from "../pkg";
 
 const canvas = document.getElementById("main-canvas") as HTMLCanvasElement;
@@ -52,3 +53,9 @@ function setupCanvas() {
     canvas.width = size;
     canvas.height = size;
 }
+*/
+
+import ReactDOM from "react-dom";
+import { App } from "./App";
+
+ReactDOM.render(<App />, document.getElementById("root"))

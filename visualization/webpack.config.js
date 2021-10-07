@@ -1,18 +1,20 @@
 const path = require("path");
 const CopyPlugin = require("copy-webpack-plugin");
 const WasmPackPlugin = require("@wasm-tool/wasm-pack-plugin");
+const HtmlWebpackPlugin = require("html-webpack-plugin");
 
 const dist = path.resolve(__dirname, "dist");
 
 module.exports = {
-  mode: "production",
-  entry: {
-    index: "./ts/index.ts"
-  },
+  mode: "development",
+  entry: path.resolve(__dirname, "./ts/index.tsx"),
   // entry: "./bootstrap.js",
+  resolve: { 
+    extensions: [".ts", ".tsx", ".js", ".wasm"],
+  },
   output: {
-    path: dist,
-    filename: "[name].js"
+    path: path.resolve(__dirname, "./dist"),
+    filename: "index.js"
   },
   devServer: {
     static: {
@@ -22,26 +24,20 @@ module.exports = {
     }
   },
   plugins: [
-    new CopyPlugin([
-      path.resolve(__dirname, "static")
-    ]),
-
-    new CopyPlugin([
-      path.resolve(__dirname, "bootstrap.js")
-    ]),
+    new HtmlWebpackPlugin({
+      template: "./static/index.html"
+    }),
 
     new WasmPackPlugin({
       crateDirectory: __dirname,
       withTypeScript: true,
     }),
   ],
-  resolve: { 
-    extensions: [".ts", ".tsx", ".js", ".wasm"],
-  },
   module: {
     rules: [{
-      test: /\.tsx?$/,
-      loader: "ts-loader"
+      test: /\.(js|ts)x?$/,
+      exclude: /node_modules/,
+      loader: "babel-loader"
     }]
   },
   experiments: {
