@@ -15,6 +15,7 @@ use nalgebra as na;
 pub use visitor::Visitor;
 
 // TODO: Should have some kind of `entry()` just like `BTreeMap`.
+// TODO: Rename `add_node` to `add_point`.
 
 pub trait HasCoords<const N: usize> {
     fn coords(&self) -> [f32; N];
@@ -43,6 +44,7 @@ pub struct KDTree<P, const N: usize> {
     data: Vec<Slot<P>>,
     next_node_vacant: usize,
     next_data_vacant: usize,
+    size: usize,
 }
 
 impl<P, const N: usize> KDTree<P, N> {
@@ -107,6 +109,7 @@ where
 
         self.next_node_vacant = next_node_vacant;
         self.next_data_vacant = next_data_vacant;
+        self.size += 1;
 
         (node_idx, data_idx)
     }
@@ -127,11 +130,12 @@ impl<P: HasCoords<N>, const N: usize> KDTree<P, N> {
             data: Vec::new(),
             next_node_vacant: 0,
             next_data_vacant: 0,
+            size: 0,
         }
     }
 
     pub fn size(&self) -> usize {
-        self.nodes.len()
+        self.size
     }
 
     pub fn insert(&mut self, p: P) -> usize {
@@ -216,6 +220,80 @@ impl<P: HasCoords<N>, const N: usize> KDTree<P, N> {
     pub fn dfs(&self) -> DFSIter<P, N> {
         DFSIter::new(self)
     }
+
+    pub fn rebuild(&mut self) {
+        fn rec_rebuild<P: HasCoords<N>, const N: usize>(nodes: &mut [Node<P, N>], tree: &mut KDTree<P, N>, depth: usize) -> Option<usize> {
+            if nodes.len() == 0 {
+                return None;
+            }
+
+            let mut mid = nodes.len() / 2;
+            let axis = depth % N;
+
+            nodes.sort_unstable_by(|a, b| {
+                let a = tree.get_point(a.data_idx).coords()[axis];
+                let b = tree.get_point(b.data_idx).coords()[axis];
+                a.partial_cmp(&b).unwrap()
+            });
+
+            // Finds the maximum value of `mid` such that `points[mid] == median`.
+            while let Some(upper) = nodes.get(mid + 1) {
+                let mid_point = tree.get_point(nodes[mid].data_idx).point();
+                let upper = tree.get_point(upper.data_idx).point();
+                // Going one upper would change the value at the `mid` index, so `mid` is right where we want.
+                if upper != mid_point {
+                    break;
+                }
+                mid += 1;
+            }
+
+            let (left, right) = nodes.split_at_mut(mid);
+
+            // This `unwrap` is ok because right has elements from indices [mid, len) and we know that `mid` is
+            // a valid index (there has to be at least one element in `points`).
+            let (&mut mut median, right) = right.split_first_mut().unwrap();
+
+            let vacant_slot = tree.nodes[tree.next_node_vacant].unwrap_vacant();
+            let node_idx = tree.next_node_vacant;
+            median.node_idx = node_idx;
+            tree.next_node_vacant = vacant_slot.put(median);
+
+            let left = rec_rebuild(left, tree, depth + 1)
+                .map(|node| NonZeroUsize::new(node).expect("No child node can have index 0."));
+
+            let right = rec_rebuild(right, tree, depth + 1)
+                .map(|node| NonZeroUsize::new(node).expect("No child node can have index 0."));
+
+            let node = tree.get_node_mut(node_idx).unwrap();
+            node.left = left;
+            node.right = right;
+
+            Some(node_idx)
+        }
+
+        // The node of index 0 will be the first in the `nodes` vec. This is necessary because when we
+        // recursivelly rebuild the tree, we need to make so that the first node to be put on the nodes
+        // array is the root node so we can keep using `NonZeroUsize`. The reverse is necessary because
+        // then, index 0 will be the last to go on `self.next_node_vacant`, which is where the first node
+        // will be reinserted.
+        let mut nodes: Vec<_> = self.nodes.iter_mut()
+            .enumerate()
+            .rev()
+            .filter_map(|(i, slot)| {
+                if slot.is_occupied() {
+                    let next_vacant = self.next_node_vacant;
+                    let vacant_slot = Slot::Vacant { next_vacant };
+                    self.next_node_vacant = i;
+                    Some(std::mem::replace(slot, vacant_slot).unwrap())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let root_idx = rec_rebuild(nodes.as_mut(), self, 0);
+        assert_eq!(root_idx, Some(0));
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -256,6 +334,13 @@ impl<T> Slot<T> {
     fn replace(&mut self, new: T) -> Slot<T> {
         std::mem::replace(self, Slot::Occupied(new))
     }
+
+    fn is_occupied(&self) -> bool {
+        match *self {
+            Slot::Occupied(_) => true,
+            Slot::Vacant{..}  => false,
+        }
+    }
 }
 
 struct VacantSlot<'a, T> {
@@ -295,7 +380,7 @@ struct Node<P, const N: usize> {
     _marker: PhantomData<P>,
 }
 
-// For some reason id didn't work deriving clone and copy directly.
+// For some reason it didn't work deriving `Clone` and `Copy` directly.
 impl<P, const N: usize> Clone for Node<P, N> {
     fn clone(&self) -> Self {
         Node {
@@ -591,7 +676,7 @@ where
     {
         if points.len() == 0 {
             return None;
-        };
+        }
 
         let axis = depth % N;
 
