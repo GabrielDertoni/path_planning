@@ -64,7 +64,7 @@ impl<'a, P> Visitor<'a, P> for NearestIndexedVisitor<'a, P>
         P: Borrow<Q>,
     {
         if let Some((_, min)) = self.min {
-            na::distance_squared(&min.borrow().point(), &other.point())
+            na::distance(&min.borrow().point(), &other.point())
         } else {
             f32::INFINITY
         }
@@ -75,7 +75,7 @@ impl<'a, P> Visitor<'a, P> for NearestIndexedVisitor<'a, P>
         Q: HasCoords<N> + ?Sized,
         P: Borrow<Q>,
     {
-        let dist = na::distance_squared(&point.borrow().point(), &other.point());
+        let dist = na::distance(&point.borrow().point(), &other.point());
         if self.radius(other) > dist {
             self.min.replace((index, point));
         }
@@ -154,7 +154,7 @@ impl<'a, P> Visitor<'a, P> for WithinRadiusIndexedVisitor<'a, P>
         P: Borrow<Q>,
     {
         let dist = na::distance_squared(&point.borrow().point(), &other.point());
-        if dist <= self.radius {
+        if dist <= self.radius.powi(2) {
             self.within_radius.push((index, point));
         }
     }
@@ -196,7 +196,7 @@ impl<'a, P> Visitor<'a, P> for WithinRadiusVisitor<'a, P>
         P: Borrow<Q>,
     {
         let dist = na::distance_squared(&point.borrow().point(), &other.point());
-        if dist <= self.radius {
+        if dist <= self.radius.powi(2) {
             self.within_radius.push(point);
         }
     }
@@ -238,7 +238,7 @@ impl<'a, P> Visitor<'a, P> for WithinRadiusIndicesVisitor
         P: Borrow<Q>,
     {
         let dist = na::distance_squared(&point.borrow().point(), &other.point());
-        if dist <= self.radius {
+        if dist <= self.radius.powi(2) {
             self.within_radius.push(index);
         }
     }
