@@ -16,12 +16,6 @@ use kd_tree::{
     HasCoords, KDTree,
 };
 
-/// An RRT* solver that is somewhat fast, but may be innacurate with respect to the cost of
-/// getting to the goal. This happens because only a constant number of closest neighbors are
-/// stored for each node, meaning that it is possible that a node is connected to a parent
-/// but the parent doesn't have a reference to this neighbor. This means that if the parent
-/// is updated, it will not update the child's cost, even though the path through the child
-/// now has a different cost.
 pub struct RRTStarConnectSolver;
 
 impl<const N: usize> RRTSolver<N> for RRTStarConnectSolver {
@@ -34,7 +28,6 @@ impl<const N: usize> RRTSolver<N> for RRTStarConnectSolver {
             obstacles: builder.get_obstacles(),
             random_range: builder.get_random_range(),
             step_size: builder.get_step_size(),
-            target_radius: builder.get_target_radius(),
             update_radius: builder.get_update_radius(),
             max_iters: builder.get_max_iters(),
         })
@@ -56,7 +49,6 @@ impl_node! {
 #[derive(Clone, Debug)]
 pub struct NodeInner {
     cost: f32,
-    other_side: Option<usize>,
     children: Vec<usize>,
     pub connected: Option<usize>,
 }
@@ -67,11 +59,7 @@ impl<const N: usize> Node<N> {
     }
 
     pub fn connected(&self) -> Option<usize> {
-        if self.grows_from_target {
-            self.inner().borrow().other_side
-        } else {
-            self.inner().borrow().connected
-        }
+        self.inner().borrow().connected
     }
 
     pub fn parent(&self) -> Option<usize> {
@@ -94,7 +82,6 @@ impl<const N: usize> Node<N> {
             grows_from_target,
             inner: RefCell::new(NodeInner {
                 cost: 0.0,
-                other_side: None,
                 children: Vec::new(),
                 connected: None,
             }),
@@ -116,7 +103,6 @@ impl<const N: usize> Node<N> {
             grows_from_target,
             inner: RefCell::new(NodeInner {
                 cost,
-                other_side: None,
                 children: Vec::new(),
                 connected: Some(connected),
             }),
@@ -169,7 +155,6 @@ struct Cfg<'a, O, const N: usize> {
     obstacles: &'a [O],
     random_range: Range<na::Point<f32, N>>,
     step_size: f32,
-    target_radius: f32,
     update_radius: f32,
     max_iters: usize,
 }
@@ -186,9 +171,11 @@ fn rrt_solve<O: Obstacle<N>, const N: usize>(
     let to: Node<N> = Node::new_root(cfg.to, true);
     let mut tree: KDTree<Node<N>, N> = KDTree::new();
     tree.insert(from.clone());
-    let to_idx = tree.insert(to);
+    tree.insert(to);
 
-    let mut reached_idx = None;
+    // This `Option` contais a tuple of three values. The index of the tree that grow from the origin, the index
+    // of the tree that grows from the target and the cost of going this way.
+    let mut reach_bridge = None;
     let mut grow_from_target = false;
 
     for _ in 0..cfg.max_iters {
@@ -197,26 +184,33 @@ fn rrt_solve<O: Obstacle<N>, const N: usize>(
         if let Some((_, new_node_idx)) =
             extend_and_rewire(rnd_point, &mut tree, cfg, grow_from_target)
         {
-            if let Some(reached) = connect(new_node_idx, &mut tree, cfg, grow_from_target) {
-                reached_idx.replace(reached);
-                break;
+            if let Some((from_origin, from_target)) = connect(new_node_idx, &mut tree, cfg) {
+                let new_cost = tree.get_point(from_origin).cost() + tree.get_point(from_target).cost();
+                if let Some((_, _, cost)) = reach_bridge {
+                    if new_cost < cost {
+                        reach_bridge.replace((from_origin, from_target, new_cost));
+                    }
+                } else {
+                    reach_bridge.replace((from_origin, from_target, new_cost));
+                }
             }
             grow_from_target = !grow_from_target;
         }
     }
 
-    let result = if reached_idx.is_some() {
-        let to = tree.get_point(to_idx);
-        let mut waypoints = vec![to.point()];
-        let mut curr_point = to;
-
-        while let Some(prev) = curr_point.connected() {
-            let prev = tree.get_point(prev);
-            waypoints.push(prev.point());
-            curr_point = prev;
-        }
+    let result = if let Some((from_origin, from_target, cost)) = reach_bridge {
+        let mut waypoints = Vec::new();
+        waypoints.extend(GraphPathIter::new(from_target, &tree).map(|i| {
+            let node = tree.get_point(i);
+            node.point()
+        }));
         waypoints.reverse();
-        Some(Path::new(waypoints, Some(to.cost())))
+        waypoints.extend(GraphPathIter::new(from_origin, &tree).map(|i| {
+            let node = tree.get_point(i);
+            node.point()
+        }));
+        waypoints.reverse();
+        Some(Path::new(waypoints, Some(cost)))
     } else {
         None
     };
@@ -299,26 +293,25 @@ fn connect<O, const N: usize>(
     target_idx: usize,
     tree: &mut KDTree<Node<N>, N>,
     cfg: &Cfg<'_, O, N>,
-    grow_from_target: bool,
-) -> Option<usize>
+) -> Option<(usize, usize)>
 where
     O: Obstacle<N>,
 {
-    let target_point = tree.get_point(target_idx).point();
+    let target_node = tree.get_point(target_idx);
+    let target_point = target_node.point();
+    let grow_from_target = target_node.grows_from_target;
 
     // We first extend and rewire the tree of the other side in order to get a point that is coming
     // in the directio of `target_idx`.
     let (node, node_idx) = extend_and_rewire(target_point, tree, cfg, !grow_from_target)?;
 
-    /*
     // Now we add many points with at most `cfg.step_size` of distance between each other in an
     // attempt to get to `target_point`.
-    let mut cost = node.cost();
     let mut prev = node_idx;
-    let mut new_point = node.point();
-    let mut dir = target_point - new_point;
+    let mut dir = target_point - node.point();
 
     while dir.magnitude() > cfg.step_size {
+        /*
         let delta = dir.cap_magnitude(cfg.step_size);
         new_point = new_point + delta;
 
@@ -336,111 +329,51 @@ where
         ));
         tree.get_point(prev).add_child(new_idx);
         prev = new_idx;
-        cost += dir.magnitude();
-        dir = target_point - new_point;
-    }
-    */
-
-    let cost = node.cost();
-    let mut prev = node_idx;
-    let mut new_point = node.point();
-    let dir = target_point - new_point;
-
-    let delta = dir.cap_magnitude(cfg.step_size);
-    new_point = new_point + delta;
-
-    // If we collide with an obstacle, we won't be able to reach `target_point`.
-    if cfg.obstacles.iter().any(|o| o.is_inside(&new_point)) {
-        return None;
-    }
-
-    let new_idx = tree.insert(Node::new(
-        new_point,
-        !grow_from_target,
-        cost + delta.magnitude(),
-        prev,
-        std::iter::empty(),
-    ));
-    tree.get_point(prev).add_child(new_idx);
-    prev = new_idx;
-    if na::distance(&target_point, &new_point) > cfg.step_size {
-        return None;
-    }
-
-    // At this point, we have reached `target_point`, which means we can connect `new_point`
-    // with `target_point`.
-
-    // If `target` is grown from the target, we must connect with `other_side` the `target_point`
-    // branch until the root of it's tree, in this case, the target.
-    let mut curr = if grow_from_target {
-        Some(target_idx)
-    } else {
-        // In this case `target` is grow from the origin and `prev` will point to a node in a tree
-        // grown from the target. So then, we need to reverse `prev` and `curr` because we want to
-        // traverse the `grow_from_target` tree.
-        let curr = Some(prev);
-        prev = target_idx;
-        curr
-    };
-
-    // Iterate in a way that `curr.other_side` points to `prev`. And then we traverse the tree going
-    // the the parent of `curr` and updating it to point to `curr`, and so on. We only traverse the
-    // `grow_from_target` tree, so we make sure that `curr` is always a member of it.
-    while let Some(to_update) = curr {
-        let node = tree.get_point(to_update);
-        let mut borrow = node.inner_mut();
-        /*
-        borrow.other_side = borrow.other_side
-            .iter()
-            .copied()
-            .chain(std::iter::once(prev))
-            .min_by_key(|&i| tree.get_point(i).cost().to_ord());
         */
+        let (node, idx) = extend_and_rewire(target_point, tree, cfg, !grow_from_target)?;
+        prev = idx;
 
-        borrow.other_side.replace(prev);
-
-        prev = to_update;
-        curr = borrow.connected;
+        dir = target_point - node.point();
     }
 
-    Some(prev)
+    if grow_from_target {
+        Some((prev, target_idx))
+    } else {
+        Some((target_idx, prev))
+    }
 }
 
-///
-/// NOTE: I saw some implementations where the cost values would be stored inside the node structure.
-/// This would be much faster, but when rewireing there should be a situation where one of the nodes
-/// may endup with a wrong cost. Consider this situation:
-/// ```
-/// /---------------------|
-/// |      1..            |
-/// |      .  ...   ...3  |
-/// |     .     ...2      |
-/// |    .                |
-/// |    . ..P            |
-/// |    O..              |
-/// |---------------------|
-/// ```
-/// points 1, 2 and 3 were already on the tree connected with edges (dots) and a new point P was just
-/// added to the graph. P will connect to O, the origin point, as it is the closest and shortest path
-/// to the origin. In the update radius of P, only 2 and O will be listed. Surely, O will not be
-/// updated. 2 however, does benefit from going through P instead of 1. So, when rewirering the path
-/// from 2 will be 2 -> P -> O. The cost of 2 will also be updated. However, the cost of 3 will remain
-/// the old cost of going 3 -> 2 -> 1 -> O and it shouldn't! The correct thing would be to also update
-/// all of the nodes that go through 2. But this is a problem because it is way more convenient to
-/// the tree going from the nodes to the origin, if we were to keep track of all of the incoming edges,
-/// it could be a significant overhead.
-///
-/// Alternativelly we could call `rewire()` recursivelly on the updated node (2, in the example). This
-/// would fix the problem as long as `dist(node[2], node[3])` is less than the update radius, but it
-/// will also trigger lots of other rewirerings.
-///
-/// In the current implementation we don't trigger any other rewrite, so it's fast but may not provide
-/// a very good path.
-///
-/// NOTE: If something goes wrong with the logic, it could cause a cycle in the graph.
-///
-fn rewire<'a, O, I, const N: usize>(node_idx: usize, near: I, tree: &KDTree<Node<N>, N>, cfg: &Cfg<'a, O, N>)
-where
+struct GraphPathIter<'a, P, const N: usize> {
+    curr: Option<usize>,
+    tree: &'a KDTree<P, N>,
+}
+
+impl<'a, P, const N: usize> GraphPathIter<'a, P, N> {
+    fn new(idx: usize, tree: &'a KDTree<P, N>) -> Self {
+        GraphPathIter {
+            curr: Some(idx),
+            tree,
+        }
+    }
+}
+
+impl<'a, const N: usize> Iterator for GraphPathIter<'a, Node<N>, N> {
+    type Item = usize;
+
+    fn next(&mut self) -> Option<usize> {
+        let curr = self.curr?;
+        let p = self.tree.get_point(curr);
+        self.curr = p.connected();
+        Some(curr)
+    }
+}
+
+fn rewire<'a, O, I, const N: usize>(
+    node_idx: usize,
+    near: I,
+    tree: &KDTree<Node<N>, N>,
+    cfg: &Cfg<'a, O, N>,
+) where
     O: Obstacle<N>,
     I: IntoIterator<Item = usize>,
 {
@@ -482,14 +415,3 @@ fn propagate_cost_update<const N: usize>(
         }
     }
 }
-
-/*
-fn calc_cost<const N: usize>(p: &na::Point<f32, N>, connected: usize, tree: &KDTree<Node<N>, N>) -> f32 {
-    let mut prev = tree.get_at(connected);
-    let mut cost = na::distance(&p, prev.borrow());
-    while let Some(next) = prev.connected.map(|c| tree.get_at(c)) {
-        cost += na::distance(prev.borrow(), next.borrow());
-    }
-    cost
-}
-*/
