@@ -150,7 +150,7 @@ fn rrt_solve<O: Obstacle<N>, const N: usize>(
         "update_radius must be bigger than step_size"
     );
 
-    let from: Node<N> = Node::new_root(from).into();
+    let from: Node<N> = Node::new_root(from);
     let mut point_tree: KDTree<Node<N>, N> = KDTree::new();
     point_tree.insert(from.clone());
 
@@ -340,7 +340,6 @@ pub struct RRTStarIter<O, const N: usize> {
     pub max_steps: usize,
     pub target_radius: f32,
     pub update_radius: f32,
-    pub max_iters: usize,
     pub sample_goal_prob: f32,
     pub kd_tree: KDTree<Node<N>, N>,
     pub iters: usize,
@@ -357,7 +356,6 @@ impl<O: Obstacle<N>, const N: usize> RRTStarIter<O, N> {
         max_steps: usize,
         target_radius: f32,
         update_radius: f32,
-        max_iters: usize,
         sample_goal_prob: f32,
     ) -> Self {
         assert!(
@@ -366,7 +364,7 @@ impl<O: Obstacle<N>, const N: usize> RRTStarIter<O, N> {
         );
 
         let mut kd_tree = KDTree::new();
-        let from: Node<N> = Node::new_root(from).into();
+        let from: Node<N> = Node::new_root(from);
         kd_tree.insert(from.clone());
 
         RRTStarIter {
@@ -378,7 +376,6 @@ impl<O: Obstacle<N>, const N: usize> RRTStarIter<O, N> {
             max_steps,
             target_radius,
             update_radius,
-            max_iters,
             sample_goal_prob,
             kd_tree,
             iters: 0,
@@ -396,7 +393,6 @@ impl<O: Obstacle<N>, const N: usize> RRTStarIter<O, N> {
             builder.get_max_steps(),
             builder.get_target_radius(),
             builder.get_update_radius(),
-            builder.get_max_iters(),
             builder.get_sample_goal_prob(),
         )
     }
@@ -414,7 +410,6 @@ impl<O: Obstacle<N>, const N: usize> Iterator for RRTStarIter<O, N> {
             max_steps,
             target_radius,
             update_radius,
-            max_iters,
             sample_goal_prob,
             ref mut kd_tree,
             ref mut iters,
@@ -422,9 +417,6 @@ impl<O: Obstacle<N>, const N: usize> Iterator for RRTStarIter<O, N> {
             ..
         } = self;
 
-        if *iters >= max_iters {
-            return None;
-        }
         let rnd_point = if gen_random() > sample_goal_prob {
             gen_random_in_range(random_range.clone())
         } else {
@@ -475,7 +467,7 @@ impl<O: Obstacle<N>, const N: usize> Iterator for RRTStarIter<O, N> {
 
             kd_tree.get_point(min_cost_idx).add_child(node_idx);
 
-            rewire(node_idx, within_radius, &kd_tree, step_size);
+            rewire(node_idx, within_radius, kd_tree, step_size);
 
             if na::distance_squared(step_point.borrow(), &to) <= target_radius * target_radius {
                 *reached_idx = reached_idx

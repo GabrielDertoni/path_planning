@@ -5,20 +5,30 @@ use nalgebra as na;
 
 use crate::HasCoords;
 
+macro_rules! impl_default_with_new {
+    (impl$(<$($generics:tt),*>)? Default for $($type:tt)*) => {
+        impl$(<$($generics),*>)? Default for $($type)* {
+            fn default() -> Self {
+                Self::new()
+            }
+        }
+    };
+}
+
 /// This trait defines an interface for any algorithm query in the KD-Tree. In a
 /// KD-Tree, the `query` function takes a visitor that implements this trait as
 /// well as a reference point that is used to navigate the tree. In the visitor,
 /// parameters this reference point is called `other`.
-/// 
+///
 /// The `accept` function may modify the visitor in some way. The only way to
 /// get nodes out of the tree is through the accept function. For instance, if a
 /// visitor wants all of the visited points, it can simply store all of the
 /// points passed to the `accept` function.
-/// 
-/// The radius function should return a radius around the reference point that 
+///
+/// The radius function should return a radius around the reference point that
 /// still needs to be searched through. If one wanted to get all of the points in
 /// the tree, it would suffice to always return `f32::INFINITY` from `radius`.
-/// 
+///
 /// The lifetime `'a` is the lifetime of the KD-Tree.
 pub trait Visitor<'a, P> {
     /// The final result of the visitor.
@@ -54,8 +64,7 @@ impl<'a, P> NearestIndexedVisitor<'a, P> {
     }
 }
 
-impl<'a, P> Visitor<'a, P> for NearestIndexedVisitor<'a, P>
-{
+impl<'a, P> Visitor<'a, P> for NearestIndexedVisitor<'a, P> {
     type Result = Option<(usize, &'a P)>;
 
     fn radius<Q, const N: usize>(&self, other: &Q) -> f32
@@ -86,6 +95,8 @@ impl<'a, P> Visitor<'a, P> for NearestIndexedVisitor<'a, P>
     }
 }
 
+impl_default_with_new! { impl<'a, P> Default for NearestIndexedVisitor<'a, P> }
+
 /// A visitor that returns the nearest point to the reference point
 pub struct NearestVisitor<'a, P> {
     inner: NearestIndexedVisitor<'a, P>,
@@ -93,12 +104,13 @@ pub struct NearestVisitor<'a, P> {
 
 impl<'a, P> NearestVisitor<'a, P> {
     pub fn new() -> Self {
-        NearestVisitor { inner: NearestIndexedVisitor::new() }
+        NearestVisitor {
+            inner: NearestIndexedVisitor::new(),
+        }
     }
 }
 
-impl<'a, P> Visitor<'a, P> for NearestVisitor<'a, P>
-{
+impl<'a, P> Visitor<'a, P> for NearestVisitor<'a, P> {
     type Result = Option<&'a P>;
 
     fn radius<Q, const N: usize>(&self, other: &Q) -> f32
@@ -122,6 +134,8 @@ impl<'a, P> Visitor<'a, P> for NearestVisitor<'a, P>
     }
 }
 
+impl_default_with_new! { impl<'a, P> Default for NearestVisitor<'a, P> }
+
 pub struct WithinRadiusIndexedVisitor<'a, P> {
     within_radius: Vec<(usize, &'a P)>,
     radius: f32,
@@ -136,8 +150,7 @@ impl<'a, P> WithinRadiusIndexedVisitor<'a, P> {
     }
 }
 
-impl<'a, P> Visitor<'a, P> for WithinRadiusIndexedVisitor<'a, P>
-{
+impl<'a, P> Visitor<'a, P> for WithinRadiusIndexedVisitor<'a, P> {
     type Result = Vec<(usize, &'a P)>;
 
     fn radius<Q, const N: usize>(&self, _: &Q) -> f32
@@ -178,8 +191,7 @@ impl<'a, P> WithinRadiusVisitor<'a, P> {
     }
 }
 
-impl<'a, P> Visitor<'a, P> for WithinRadiusVisitor<'a, P>
-{
+impl<'a, P> Visitor<'a, P> for WithinRadiusVisitor<'a, P> {
     type Result = Vec<&'a P>;
 
     fn radius<Q, const N: usize>(&self, _: &Q) -> f32
@@ -220,8 +232,7 @@ impl WithinRadiusIndicesVisitor {
     }
 }
 
-impl<'a, P> Visitor<'a, P> for WithinRadiusIndicesVisitor
-{
+impl<'a, P> Visitor<'a, P> for WithinRadiusIndicesVisitor {
     type Result = Vec<usize>;
 
     fn radius<Q, const N: usize>(&self, _: &Q) -> f32
@@ -260,7 +271,11 @@ where
     for<'b> F: Fn(&'b P) -> bool,
 {
     pub fn new(vis: V, prec: F) -> Self {
-        PreconditionVisitor { prec, vis, _marker: PhantomData }
+        PreconditionVisitor {
+            prec,
+            vis,
+            _marker: PhantomData,
+        }
     }
 }
 
@@ -293,3 +308,79 @@ where
         self.vis.result()
     }
 }
+
+pub struct AcceptAllIndexedVisitor<'a, P> {
+    accepted: Vec<(usize, &'a P)>,
+}
+
+impl<'a, P> AcceptAllIndexedVisitor<'a, P> {
+    pub fn new() -> Self {
+        AcceptAllIndexedVisitor {
+            accepted: Vec::new(),
+        }
+    }
+}
+
+impl<'a, P> Visitor<'a, P> for AcceptAllIndexedVisitor<'a, P> {
+    type Result = Vec<(usize, &'a P)>;
+
+    fn radius<Q, const N: usize>(&self, _: &Q) -> f32
+    where
+        Q: HasCoords<N> + ?Sized,
+        P: Borrow<Q>,
+    {
+        f32::INFINITY
+    }
+
+    fn accept<Q, const N: usize>(&mut self, point: &'a P, index: usize, _: &Q)
+    where
+        Q: HasCoords<N> + ?Sized,
+        P: Borrow<Q>,
+    {
+        self.accepted.push((index, point));
+    }
+
+    fn result(self) -> Vec<(usize, &'a P)> {
+        self.accepted
+    }
+}
+
+impl_default_with_new! { impl<'a, P> Default for AcceptAllIndexedVisitor<'a, P> }
+
+pub struct AcceptAllIndicesVisitor {
+    accepted: Vec<usize>,
+}
+
+impl AcceptAllIndicesVisitor {
+    pub fn new() -> Self {
+        AcceptAllIndicesVisitor {
+            accepted: Vec::new(),
+        }
+    }
+}
+
+impl<'a, P> Visitor<'a, P> for AcceptAllIndicesVisitor {
+    type Result = Vec<usize>;
+
+    fn radius<Q, const N: usize>(&self, _: &Q) -> f32
+    where
+        Q: HasCoords<N> + ?Sized,
+        P: Borrow<Q>,
+    {
+        f32::INFINITY
+    }
+
+    fn accept<Q, const N: usize>(&mut self, _: &'a P, index: usize, _: &Q)
+    where
+        Q: HasCoords<N> + ?Sized,
+        P: Borrow<Q>,
+    {
+        self.accepted.push(index);
+    }
+
+    fn result(self) -> Vec<usize> {
+        self.accepted
+    }
+}
+
+impl_default_with_new! { impl Default for AcceptAllIndicesVisitor }

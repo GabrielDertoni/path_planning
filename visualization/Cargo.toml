@@ -1,9 +1,9 @@
 # You must change these to your own details.
 [package]
-name = "rust-webpack-template"
-description = "My super awesome Rust, WebAssembly, and Webpack project!"
+name = "rrt-vis"
+description = "Web visualization of RRT algorithms written with web assembly"
 version = "0.1.0"
-authors = ["You <you@example.com>"]
+authors = ["Gabriel <gab.dertoni@gmail.com>"]
 categories = ["wasm"]
 readme = "README.md"
 edition = "2018"
@@ -25,7 +25,7 @@ default = []
 kd_tree = { path = "../kd_tree" }
 rrt = { path = "../rrt" }
 plotters = "0.3.1"
-plotters-canvas = "^0.3.*"
+plotters-canvas = { git = "https://github.com/plotters-rs/plotters-canvas" }
 nalgebra = { version = "^0.29", features = ["rand"] }
 getrandom = { version = "0.2.3", features = ["js"] }
 

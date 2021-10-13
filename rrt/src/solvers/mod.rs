@@ -10,6 +10,10 @@ pub mod star_connect;
 #[cfg(feature = "multithreaded")]
 pub mod multithreaded;
 
+pub mod risk_alloc;
+
+pub mod node;
+
 pub use simple::RRTSimpleSolver;
 pub use linear_search::RRTLinearSearchSolver;
 

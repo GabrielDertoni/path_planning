@@ -32,17 +32,17 @@ where
 {
     fn clone(&self) -> Self {
         RRTBuilder {
-            from: self.from.clone(),
-            to: self.to.clone(),
+            from: self.from,
+            to: self.to,
             graph: self.graph.clone(),
             obstacles: self.obstacles.clone(),
-            step_size: self.step_size.clone(),
-            max_steps: self.max_steps.clone(),
-            target_radius: self.target_radius.clone(),
-            update_radius: self.update_radius.clone(),
+            step_size: self.step_size,
+            max_steps: self.max_steps,
+            target_radius: self.target_radius,
+            update_radius: self.update_radius,
             random_range: self.random_range.clone(),
-            max_iters: self.max_iters.clone(),
-            sample_goal_prob: self.sample_goal_prob.clone(),
+            max_iters: self.max_iters,
+            sample_goal_prob: self.sample_goal_prob,
             _solver: PhantomData,
         }
     }
@@ -129,7 +129,7 @@ where
     }
 
     pub fn with_sample_goal_prob(mut self, prob: f32) -> Self {
-        assert!(prob >= 0.0 && prob <= 1.0, "probability must be between 0 and 1, but was {}", prob);
+        assert!((0.0..=1.0).contains(&prob), "probability must be between 0 and 1, but was {}", prob);
         self.sample_goal_prob.replace(prob);
         self
     }

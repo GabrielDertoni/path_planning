@@ -47,18 +47,6 @@ pub struct KDTree<P, const N: usize> {
     size: usize,
 }
 
-impl<P, const N: usize> KDTree<P, N> {
-    pub const ROOT_IDX: usize = 0;
-
-    pub fn get_point(&self, idx: usize) -> &P {
-        self.data[idx].as_ref().unwrap()
-    }
-
-    pub fn get_point_mut(&mut self, idx: usize) -> &mut P {
-        self.data[idx].as_mut().unwrap()
-    }
-}
-
 impl<P, const N: usize> KDTree<P, N>
 where
     P: HasCoords<N> + Sized,
@@ -118,11 +106,24 @@ where
 impl<P: HasCoords<N>, const N: usize> KDTree<P, N> {
     #[inline]
     fn get_data(&self, idx: usize) -> &P {
-        &self.data[idx].as_ref().unwrap()
+        self.data[idx].as_ref().unwrap()
     }
 }
 
-impl<P: HasCoords<N>, const N: usize> KDTree<P, N> {
+impl<P, const N: usize> KDTree<P, N>
+where
+    P: HasCoords<N> + Sized,
+{
+    pub const ROOT_IDX: usize = 0;
+
+    pub fn get_point(&self, idx: usize) -> &P {
+        self.data[idx].as_ref().unwrap()
+    }
+
+    pub fn get_point_mut(&mut self, idx: usize) -> &mut P {
+        self.data[idx].as_mut().unwrap()
+    }
+
     #[inline]
     pub fn new() -> KDTree<P, N> {
         KDTree {
@@ -223,7 +224,7 @@ impl<P: HasCoords<N>, const N: usize> KDTree<P, N> {
 
     pub fn rebuild(&mut self) {
         fn rec_rebuild<P: HasCoords<N>, const N: usize>(nodes: &mut [Node<P, N>], tree: &mut KDTree<P, N>, depth: usize) -> Option<usize> {
-            if nodes.len() == 0 {
+            if nodes.is_empty() {
                 return None;
             }
 
@@ -293,6 +294,15 @@ impl<P: HasCoords<N>, const N: usize> KDTree<P, N> {
 
         let root_idx = rec_rebuild(nodes.as_mut(), self, 0);
         assert_eq!(root_idx, Some(0));
+    }
+}
+
+impl<P, const N: usize> Default for KDTree<P, N>
+where
+    P: HasCoords<N>,
+{
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -386,9 +396,9 @@ impl<P, const N: usize> Clone for Node<P, N> {
         Node {
             data_idx: self.data_idx,
             node_idx: self.node_idx,
-            left: self.left.clone(),
-            right: self.right.clone(),
-            _marker: self._marker.clone(),
+            left: self.left,
+            right: self.right,
+            _marker: self._marker,
         }
     }
 }
@@ -445,16 +455,14 @@ where
                 self.left.replace(node_idx);
                 node_idx
             }
+        } else if let Some(child) = &mut self.get_right(tree) {
+            child.insert(tree, p, depth + 1)
         } else {
-            if let Some(child) = &mut self.get_right(tree) {
-                child.insert(tree, p, depth + 1)
-            } else {
-                let node_idx = NonZeroUsize::new(tree.add_node(p).0)
-                    .expect("Child node cannot have index 0");
+            let node_idx = NonZeroUsize::new(tree.add_node(p).0)
+                .expect("Child node cannot have index 0");
 
-                self.right.replace(node_idx);
-                node_idx
-            }
+            self.right.replace(node_idx);
+            node_idx
         };
         self.write(tree);
         ret
@@ -617,7 +625,7 @@ where
 
         let dist_sq = na::distance_squared(&median.point(), &p.point());
         if dist_sq <= visitor.radius(p).powi(2) {
-            visitor.accept(&median, self.data_idx, p);
+            visitor.accept(median, self.data_idx, p);
         }
 
         if visitor.radius(p) > (p_ax - m_ax).abs() {
@@ -635,7 +643,7 @@ where
         points: &mut [ManuallyDrop<P>],
         depth: usize,
     ) {
-        if points.len() == 0 {
+        if points.is_empty() {
             return;
         };
         let axis = depth % N;
@@ -674,7 +682,7 @@ where
         depth: usize,
     ) -> Option<usize>
     {
-        if points.len() == 0 {
+        if points.is_empty() {
             return None;
         }
 

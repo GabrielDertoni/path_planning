@@ -3,6 +3,7 @@
 use std::cell::RefCell;
 use std::ops::Range;
 use std::fmt::Debug;
+use std::cmp::Ordering;
 
 use rand::prelude::*;
 use nalgebra as na;
@@ -32,13 +33,25 @@ pub(crate) fn gen_random_in_range<const N: usize>(range: Range<na::Point<f32, N>
     na::Point::from(s + rand_vec.component_mul(&(e - s)))
 }
 
-#[derive(Debug, PartialEq, PartialOrd)]
+#[derive(Debug, PartialEq)]
 pub struct PartialOrdUnwrap<T>(pub T);
+
+impl<T> PartialOrdUnwrap<T> {
+    pub fn from_ord(self) -> T {
+        self.0
+    }
+}
 
 impl<T: PartialOrd> std::cmp::Eq for PartialOrdUnwrap<T> {}
 
-impl<T: PartialOrd> std::cmp::Ord for PartialOrdUnwrap<T> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+impl<T: PartialOrd> PartialOrd for PartialOrdUnwrap<T> {
+    fn partial_cmp(&self, other: &PartialOrdUnwrap<T>) -> Option<Ordering> {
+        self.0.partial_cmp(&other.0)
+    }
+}
+
+impl<T: PartialOrd> Ord for PartialOrdUnwrap<T> {
+    fn cmp(&self, other: &Self) -> Ordering {
         self.partial_cmp(other).unwrap()
     }
 }

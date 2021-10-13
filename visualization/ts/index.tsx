@@ -5,7 +5,7 @@ const canvas = document.getElementById("main-canvas") as HTMLCanvasElement;
 const max_iters_input = document.getElementById("max-iters-input") as HTMLInputElement;
 const max_iters_display = document.getElementById("max-iters-display")!;
 
-let rrt = new RRTAlgorithm(200000);
+let rrt = new RRTAlgorithm();
 
 function main() {
     setupCanvas();
@@ -35,7 +35,7 @@ function main() {
         const max_iters = parseInt(max_iters_input.value);
 
         if (rrt.iters() > max_iters) {
-            rrt = new RRTAlgorithm(200000);
+            rrt = new RRTAlgorithm();
 
             while (rrt.iters() < max_iters) {
                 rrt.step();
