@@ -209,7 +209,7 @@ impl RRTAlgorithm {
 
         root.draw(&PathElement::new(
             series.clone(),
-            ShapeStyle::from(&BLUE).filled().stroke_width(3),
+            ShapeStyle::from(&BLUE).filled().stroke_width(5),
         ))?;
 
         Ok(())
