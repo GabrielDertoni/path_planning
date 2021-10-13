@@ -62,7 +62,7 @@ where
         "update_radius must be bigger than step_size"
     );
 
-    let from: Node<N> = Node::new_root(from).into();
+    let from: Node<N> = Node::new_root(from);
     let mut tree: KDTree<Node<N>, N> = KDTree::new();
     tree.insert(from.clone());
 

@@ -5,6 +5,16 @@ use nalgebra as na;
 
 use crate::HasCoords;
 
+macro_rules! impl_default_with_new {
+    (impl$(<$($generics:tt),*>)? Default for $($type:tt)*) => {
+        impl$(<$($generics),*>)? Default for $($type)* {
+            fn default() -> Self {
+                Self::new()
+            }
+        }
+    };
+}
+
 /// This trait defines an interface for any algorithm query in the KD-Tree. In a
 /// KD-Tree, the `query` function takes a visitor that implements this trait as
 /// well as a reference point that is used to navigate the tree. In the visitor,
@@ -85,6 +95,8 @@ impl<'a, P> Visitor<'a, P> for NearestIndexedVisitor<'a, P> {
     }
 }
 
+impl_default_with_new! { impl<'a, P> Default for NearestIndexedVisitor<'a, P> }
+
 /// A visitor that returns the nearest point to the reference point
 pub struct NearestVisitor<'a, P> {
     inner: NearestIndexedVisitor<'a, P>,
@@ -121,6 +133,8 @@ impl<'a, P> Visitor<'a, P> for NearestVisitor<'a, P> {
         self.inner.result().map(|r| r.1)
     }
 }
+
+impl_default_with_new! { impl<'a, P> Default for NearestVisitor<'a, P> }
 
 pub struct WithinRadiusIndexedVisitor<'a, P> {
     within_radius: Vec<(usize, &'a P)>,
@@ -331,6 +345,8 @@ impl<'a, P> Visitor<'a, P> for AcceptAllIndexedVisitor<'a, P> {
     }
 }
 
+impl_default_with_new! { impl<'a, P> Default for AcceptAllIndexedVisitor<'a, P> }
+
 pub struct AcceptAllIndicesVisitor {
     accepted: Vec<usize>,
 }
@@ -366,3 +382,5 @@ impl<'a, P> Visitor<'a, P> for AcceptAllIndicesVisitor {
         self.accepted
     }
 }
+
+impl_default_with_new! { impl Default for AcceptAllIndicesVisitor }

@@ -150,7 +150,7 @@ fn rrt_solve<O: Obstacle<N>, const N: usize>(
         "update_radius must be bigger than step_size"
     );
 
-    let from: Node<N> = Node::new_root(from).into();
+    let from: Node<N> = Node::new_root(from);
     let mut point_tree: KDTree<Node<N>, N> = KDTree::new();
     point_tree.insert(from.clone());
 
@@ -366,7 +366,7 @@ impl<O: Obstacle<N>, const N: usize> RRTStarIter<O, N> {
         );
 
         let mut kd_tree = KDTree::new();
-        let from: Node<N> = Node::new_root(from).into();
+        let from: Node<N> = Node::new_root(from);
         kd_tree.insert(from.clone());
 
         RRTStarIter {
@@ -475,7 +475,7 @@ impl<O: Obstacle<N>, const N: usize> Iterator for RRTStarIter<O, N> {
 
             kd_tree.get_point(min_cost_idx).add_child(node_idx);
 
-            rewire(node_idx, within_radius, &kd_tree, step_size);
+            rewire(node_idx, within_radius, kd_tree, step_size);
 
             if na::distance_squared(step_point.borrow(), &to) <= target_radius * target_radius {
                 *reached_idx = reached_idx

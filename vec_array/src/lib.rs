@@ -35,6 +35,10 @@ impl<T, const N: usize> VecArray<T, N> {
         self.len
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn as_slice(&self) -> &[T] {
         // SAFETY: indexes from 0 to len are garanteed to be valid.
         unsafe { MaybeUninit::slice_assume_init_ref(&self.buf[0..self.len]) }
@@ -57,13 +61,14 @@ impl<T, const N: usize> VecArray<T, N> {
         let right: &mut [MaybeUninit<T>] = unsafe { std::mem::transmute(right) };
 
         let mut right_vec = VecArray::new();
-        for i in 0..right.len() {
+        for r in right.iter_mut() {
             unsafe {
                 right_vec
-                    .push(std::mem::replace(&mut right[i], MaybeUninit::zeroed()).assume_init())
+                    .push(std::mem::replace(r, MaybeUninit::zeroed()).assume_init())
                     .unwrap();
             }
         }
+        self.len = index;
 
         right_vec
     }
@@ -184,8 +189,8 @@ impl<T: Clone, const N: usize> Clone for VecArray<T, N> {
         let len = self.len();
         // SAFETY: We know that in range 0..len, the values are valid.
         unsafe {
-            for i in 0..len {
-                buf[i].write(self.buf[i].assume_init_ref().clone());
+            for (el, self_el) in buf.iter_mut().zip(&self.buf).take(len) {
+                el.write(self_el.assume_init_ref().clone());
             }
         }
         VecArray { buf, len }
@@ -206,7 +211,7 @@ impl<T, const N: usize> Drop for VecArray<T, N> {
 impl<T: Debug, const N: usize> Debug for VecArray<T, N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "[")?;
-        if self.len() > 0 {
+        if !self.is_empty() {
             write!(f, "{:?}", self[0])?;
 
             for i in 1..self.len() {
