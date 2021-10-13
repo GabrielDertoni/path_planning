@@ -340,7 +340,6 @@ pub struct RRTStarIter<O, const N: usize> {
     pub max_steps: usize,
     pub target_radius: f32,
     pub update_radius: f32,
-    pub max_iters: usize,
     pub sample_goal_prob: f32,
     pub kd_tree: KDTree<Node<N>, N>,
     pub iters: usize,
@@ -357,7 +356,6 @@ impl<O: Obstacle<N>, const N: usize> RRTStarIter<O, N> {
         max_steps: usize,
         target_radius: f32,
         update_radius: f32,
-        max_iters: usize,
         sample_goal_prob: f32,
     ) -> Self {
         assert!(
@@ -378,7 +376,6 @@ impl<O: Obstacle<N>, const N: usize> RRTStarIter<O, N> {
             max_steps,
             target_radius,
             update_radius,
-            max_iters,
             sample_goal_prob,
             kd_tree,
             iters: 0,
@@ -396,7 +393,6 @@ impl<O: Obstacle<N>, const N: usize> RRTStarIter<O, N> {
             builder.get_max_steps(),
             builder.get_target_radius(),
             builder.get_update_radius(),
-            builder.get_max_iters(),
             builder.get_sample_goal_prob(),
         )
     }
@@ -414,7 +410,6 @@ impl<O: Obstacle<N>, const N: usize> Iterator for RRTStarIter<O, N> {
             max_steps,
             target_radius,
             update_radius,
-            max_iters,
             sample_goal_prob,
             ref mut kd_tree,
             ref mut iters,
@@ -422,9 +417,6 @@ impl<O: Obstacle<N>, const N: usize> Iterator for RRTStarIter<O, N> {
             ..
         } = self;
 
-        if *iters >= max_iters {
-            return None;
-        }
         let rnd_point = if gen_random() > sample_goal_prob {
             gen_random_in_range(random_range.clone())
         } else {

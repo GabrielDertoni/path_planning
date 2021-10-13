@@ -54,7 +54,7 @@ type Error = Box<dyn std::error::Error>;
 #[wasm_bindgen]
 impl RRTAlgorithm {
     #[wasm_bindgen(constructor)]
-    pub fn new(max_iters: usize) -> Self {
+    pub fn new() -> Self {
         let target = point2(5.0, 5.0);
         let origin = point2(65.0, 65.0);
 
@@ -76,7 +76,6 @@ impl RRTAlgorithm {
             .with_step_size(1.0)
             .with_target_radius(1.0)
             .with_max_stepping(1)
-            .with_max_iters(max_iters)
             .with_update_radius(1.0)
             .with_random_range_start(point2(0.0, 0.0))
             .with_random_range_end(point2(130.0, 130.0));
