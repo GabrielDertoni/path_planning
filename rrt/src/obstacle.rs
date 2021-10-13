@@ -1,6 +1,7 @@
-use std::borrow::Cow;
+use std::borrow::{ Cow, Borrow, BorrowMut };
 
 use nalgebra as na;
+use itertools::Itertools;
 
 use crate::utils::*;
 
@@ -40,8 +41,9 @@ pub trait DistanceToPoint<const N: usize> {
 }
 
 pub trait Convex<const N: usize> {}
-pub trait FaceNormal<const N: usize> {
+pub trait FaceNormals<const N: usize> {
     fn face_normals(&self) -> Cow<'_, [na::SVector<f32, N>]>;
+    fn face_points(&self) -> Cow<'_, [na::Point<f32, N>]>;
 }
 
 #[repr(transparent)]
@@ -58,11 +60,12 @@ where
         let mut min_dist = f32::INFINITY;
 
         while min_dist > 1e-3 && (0.0..1e4).contains(&param) {
-            min_dist = self.0
+            min_dist = self
+                .0
                 .clone()
                 .map(|el| el.distance_to_point(curr).to_ord())
-                .min()?.0;
-            
+                .min()?
+                .0;
             curr += ray.dir * min_dist;
             param += min_dist;
         }
@@ -89,7 +92,6 @@ macro_rules! impl_ray_marching {
         }
     };
 }
-
 
 impl<T, const N: usize> Obstacle<N> for &T
 where
@@ -204,6 +206,19 @@ impl<const N: usize> Rectangle<N> {
     pub fn new(corner: na::Point<f32, N>, size: na::SVector<f32, N>) -> Self {
         Self { corner, size }
     }
+
+    /// Returns all of the verticies of the rectangle in no particular order.
+    pub fn vertices(&self) -> impl Iterator<Item = na::Point<f32, N>> + ExactSizeIterator + Clone + '_ {
+        // Iterate through all of the combiations of numbers with N bits. This will
+        // allow us to get all of the vertices.
+        (0..2_u32.pow(N as u32)).map(|combination| {
+            // Iterator that iterates through the bits of `combination`.
+            let bits_iter = (0..N).map(|shift| (combination >> shift) & 1);
+            // A vector that has 1s and 0s for coordenates based on `combination`.
+            let comb_p: na::SVector<f32, N> = na::SVector::from_iterator(bits_iter.map(|bit| bit as f32));
+            self.corner + comb_p.component_mul(&self.size)
+        })
+    }
 }
 
 impl<const N: usize> Obstacle<N> for Rectangle<N> {
@@ -212,4 +227,96 @@ impl<const N: usize> Obstacle<N> for Rectangle<N> {
             |(&p_coord, &corner_coord, &sz)| (corner_coord..corner_coord + sz).contains(&p_coord),
         )
     }
+}
+
+impl<const N: usize> Convex<N> for Rectangle<N> {}
+
+impl FaceNormals<2> for Rectangle<2> {
+    fn face_normals(&self) -> Cow<'_, [na::Vector2<f32>]> {
+        Cow::Owned(face_normals_from_vertices_2d([
+            na::Point2::new(self.corner.x              , self.corner.y + self.size.y),
+            na::Point2::new(self.corner.x + self.size.x, self.corner.y + self.size.y),
+            na::Point2::new(self.corner.x + self.size.x, self.corner.y),
+            self.corner,
+        ].into_iter()))
+    }
+
+    fn face_points(&self) -> Cow<'_, [na::Point2<f32>]> {
+        Cow::Owned(vec![
+            na::Point2::new(self.corner.x              , self.corner.y + self.size.y),
+            na::Point2::new(self.corner.x + self.size.x, self.corner.y + self.size.y),
+            na::Point2::new(self.corner.x + self.size.x, self.corner.y),
+            self.corner,
+        ])
+    }
+}
+
+pub struct PrecomputedNormals<T, const N: usize> {
+    shape: T,
+    face_normals: Vec<na::SVector<f32, N>>,
+    face_points: Vec<na::Point<f32, N>>,
+}
+
+impl<T: Convex<N>, const N: usize> Convex<N> for PrecomputedNormals<T, N> {}
+
+impl<T: FaceNormals<N>, const N: usize> PrecomputedNormals<T, N> {
+    pub fn new(shape: T) -> Self {
+        let face_normals = shape.face_normals().into_owned();
+        let face_points = shape.face_points().into_owned();
+        PrecomputedNormals {
+            shape,
+            face_normals,
+            face_points,
+        }
+    }
+}
+
+impl<T, const N: usize> FaceNormals<N> for PrecomputedNormals<T, N> {
+    fn face_normals(&self) -> Cow<'_, [na::SVector<f32, N>]> {
+        Cow::Borrowed(&self.face_normals)
+    }
+
+    fn face_points(&self) -> Cow<'_, [na::Point<f32, N>]> {
+        Cow::Borrowed(&self.face_points)
+    }
+}
+
+impl<T, const N: usize> Borrow<T> for PrecomputedNormals<T, N> {
+    fn borrow(&self) -> &T {
+        &self.shape
+    }
+}
+
+impl<T, const N: usize> BorrowMut<T> for PrecomputedNormals<T, N> {
+    fn borrow_mut(&mut self) -> &mut T {
+        &mut self.shape
+    }
+}
+
+pub trait PrecomputeNormals<const N: usize>: Sized {
+    fn precompute_normals(self) -> PrecomputedNormals<Self, N>;
+}
+
+impl<T: FaceNormals<N> + Sized, const N: usize> PrecomputeNormals<N> for T {
+    fn precompute_normals(self) -> PrecomputedNormals<Self, N> {
+        PrecomputedNormals::new(self)
+    }
+}
+
+// Computes the normal vectors to each face of a 2d polygon. The vertices MUST be in clockwise order.
+fn face_normals_from_vertices_2d<I>(vertices: I) -> Vec<na::Vector2<f32>>
+where
+    I: Iterator<Item = na::Point2<f32>>,
+    I: ExactSizeIterator,
+    I: Clone,
+{
+    let mut normals = Vec::new();
+    for (p1, p2) in vertices.circular_tuple_windows() {
+        // Rotate vector from p1 to p2 on 90 degrees
+        let normal = na::Vector2::new(-(p2.y - p1.y), p2.x - p1.x);
+
+        normals.push(normal.normalize());
+    }
+
+    normals
 }
