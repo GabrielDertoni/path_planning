@@ -6,15 +6,14 @@ const HtmlWebpackPlugin = require("html-webpack-plugin");
 const dist = path.resolve(__dirname, "dist");
 
 module.exports = {
-  mode: "development",
+  mode: "production",
   entry: path.resolve(__dirname, "./ts/index.tsx"),
-  // entry: "./bootstrap.js",
   resolve: { 
     extensions: [".ts", ".tsx", ".js", ".wasm"],
   },
   output: {
-    path: path.resolve(__dirname, "./dist"),
-    filename: "index.js"
+    path: dist,
+    filename: "[name].js"
   },
   devServer: {
     static: {
