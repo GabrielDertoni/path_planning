@@ -1,7 +1,7 @@
 import { useState, createRef, useEffect, RefObject } from "react";
 import { RRTAlgorithm, init } from "../pkg";
 
-let rrt = new RRTAlgorithm(200000);
+let rrt = new RRTAlgorithm();
 
 export const App = () => {
     let width = 1300;
@@ -19,7 +19,6 @@ export const App = () => {
         while (rrt.iters() < iters_min) {
             rrt.step();
         }
-        console.log("iterated ", iters_min);
         rrt.draw(main_canvas.current!);
     }, []);
 
@@ -39,7 +38,7 @@ export const App = () => {
         const max_iters = parseInt(iters_input.current!.value);
 
         if (rrt.iters() > max_iters) {
-            rrt = new RRTAlgorithm(200000);
+            rrt = new RRTAlgorithm();
 
             while (rrt.iters() < max_iters) {
                 rrt.step();
@@ -49,22 +48,20 @@ export const App = () => {
     }
 
     return (
-        <>
-            <div>
-                <input
-                    className="wide-slider"
-                    ref={iters_input}
-                    type="range"
-                    min={iters_min}
-                    max={iters_max}
-                    onInput={onInputIters}
-                    onChange={onChangeIters}
-                />
-                <p className="iter-count">
-                    Iterations: <span> {iters} </span>
-                </p>
-                <canvas ref={main_canvas} width={width} height={height}></canvas>
-            </div>
-        </>
-    )
+        <div>
+            <input
+                className="wide-slider"
+                ref={iters_input}
+                type="range"
+                min={iters_min}
+                max={iters_max}
+                onInput={onInputIters}
+                onChange={onChangeIters}
+            />
+            <p className="iter-count">
+                Iterations: <span> {iters} </span>
+            </p>
+            <canvas ref={main_canvas} width={width} height={height}></canvas>
+        </div>
+    );
 }

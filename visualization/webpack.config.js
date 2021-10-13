@@ -7,7 +7,7 @@ const dist = path.resolve(__dirname, "dist");
 
 module.exports = {
   mode: "production",
-  entry: path.resolve(__dirname, "./ts/index.tsx"),
+  entry: path.resolve(__dirname, "./app/index.tsx"),
   resolve: { 
     extensions: [".ts", ".tsx", ".js", ".wasm"],
   },
@@ -17,14 +17,14 @@ module.exports = {
   },
   devServer: {
     static: {
-      directory: path.resolve(__dirname, "static"),
+      directory: path.resolve(__dirname, "public"),
       staticOptions: {},
       watch: true,
     }
   },
   plugins: [
     new HtmlWebpackPlugin({
-      template: "./static/index.html"
+      template: "./public/index.html"
     }),
 
     new WasmPackPlugin({
