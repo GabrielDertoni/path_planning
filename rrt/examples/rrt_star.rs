@@ -48,24 +48,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_random_range_end(point2(130.0, 130.0))
         .solve();
 
+    eprintln!("Used {} points", res.n_points);
+    if let Some(rrt::Path { cost: Some(cost), .. }) = &res.result {
+        println!("Cost: {}", cost);
+    }
+
     if plot {
-        eprintln!("Used {} points", res.n_points);
 
-        if let Some(rrt::Path { cost: Some(cost), .. }) = &res.result {
-            println!("Cost: {}", cost);
-
-            let mut avg = 0.0;
-            let mut max = 0;
-            for node in &res.graph.points {
-                let n_children = node.children().len();
-                avg += n_children as f32;
-                if n_children > max {
-                    max = n_children;
-                }
+        let mut avg = 0.0;
+        let mut max = 0;
+        for node in &res.graph.points {
+            let n_children = node.children().len();
+            avg += n_children as f32;
+            if n_children > max {
+                max = n_children;
             }
-            println!("Average number of children is {}", avg / res.graph.points.len() as f32);
-            println!("Max number of children is {}", max);
         }
+        println!("Average number of children is {}", avg / res.graph.points.len() as f32);
+        println!("Max number of children is {}", max);
 
         let root = BitMapBackend::new("test.png", (1300, 1300)).into_drawing_area();
 
