@@ -11,6 +11,8 @@ vec_array = { path = "../vec_array" }
 nalgebra = { version = "^0.29", features = ["rand"] }
 itertools = "0.10"
 rand = "0.8.4"
+statrs = "0.15.0"
+lazy_static = "1.4"
 
 [dev-dependencies]
 plotters = "0.3.1"

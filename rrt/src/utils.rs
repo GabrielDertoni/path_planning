@@ -35,6 +35,12 @@ pub(crate) fn gen_random_in_range<const N: usize>(range: Range<na::Point<f32, N>
 #[derive(Debug, PartialEq, PartialOrd)]
 pub struct PartialOrdUnwrap<T>(pub T);
 
+impl<T> PartialOrdUnwrap<T> {
+    pub fn from_ord(self) -> T {
+        self.0
+    }
+}
+
 impl<T: PartialOrd> std::cmp::Eq for PartialOrdUnwrap<T> {}
 
 impl<T: PartialOrd> std::cmp::Ord for PartialOrdUnwrap<T> {
