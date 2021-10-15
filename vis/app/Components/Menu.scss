@@ -1,0 +1,14 @@
+.menu {
+    display: flex;
+    flex-direction: column;
+    flex-wrap: nowrap;
+    width: 30rem;
+
+    .title {
+        text-decoration: underline;
+        display: flex;
+        flex-direction: row;
+        flex-wrap: nowrap;
+        justify-content: center;
+    }
+}

@@ -1,0 +1,49 @@
+.button-wrapper {
+  height: 3em;
+  display: flex;
+  flex-direction: row;
+  justify-content: center;
+  filter: drop-shadow(0px 2px 6px rgba(255, 255, 255, 0.31));
+  margin-bottom: 1em;
+
+  .menu-button {
+    height: 100%;
+    width: 24rem;
+    padding: 0 0.5em;
+    position: relative;
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    align-items: center;
+    font-size: 2em;
+    color: white;
+    background: transparent;
+    border-color: white;
+    border-radius: 8px;
+    transition: background .2s;
+
+    &:before {
+        content: '';
+        background: linear-gradient(
+        270deg,
+        #2667c9 0%,
+        rgba(47, 79, 129, 0) 42.48%,
+        rgba(47, 79, 129, 0) 75.04%,
+        #2667c9 105.94%
+        );
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        opacity: 0;
+        z-index: -1;
+        transition: opacity .2s;
+    }
+
+    &:hover:before {
+        opacity: 1;
+    }
+  }
+}
