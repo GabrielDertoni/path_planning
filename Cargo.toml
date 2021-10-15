@@ -6,7 +6,7 @@ members = [
     "rtree",
 ]
 
-exclude = ["visualization"]
+exclude = ["vis"]
 
 [profile.dev]
 # The tests take a very long time without optimization.
