@@ -1,5 +1,7 @@
+@import "./Global.scss";
+
 body {
-    background-color: #383189;
+    background-color: $main-bg-color;
 
     #root {
         width: 100%;

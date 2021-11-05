@@ -10,5 +10,27 @@
         flex-direction: row;
         flex-wrap: nowrap;
         justify-content: center;
+        z-index: 1;
+    }
+
+    .background {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+
+        .mask {
+            z-index: 0;
+            background: radial-gradient(
+                66.47% 66.47% at 50% 50%,
+                rgba(0, 0, 0, 0) 0%,
+                #383189 100%
+            );
+        }
+
+        canvas {
+            z-index: -1;
+        }
     }
 }
