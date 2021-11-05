@@ -3,7 +3,6 @@ members = [
     "rrt",
     "vec_array",
     "kd_tree",
-    "rtree",
 ]
 
 exclude = ["vis"]

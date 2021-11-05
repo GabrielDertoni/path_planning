@@ -1128,14 +1128,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rtree"
-version = "0.1.0"
-dependencies = [
- "nalgebra 0.29.0",
- "vec_array",
-]
-
-[[package]]
 name = "rust-ini"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
