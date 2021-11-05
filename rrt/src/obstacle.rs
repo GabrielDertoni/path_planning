@@ -159,6 +159,9 @@ impl<const N: usize> SampleValid<N> for BBox<N> {
     }
 }
 
+pub type Polygon = Polytope<2>;
+
+#[derive(Debug, PartialEq)]
 pub struct Polytope<const N: usize> {
     pub vertices: Vec<na::Point<f32, N>>,
 }

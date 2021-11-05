@@ -3,7 +3,7 @@ members = [
     "rrt",
     "vec_array",
     "kd_tree",
-    "rtree",
+    "map-gen",
 ]
 
 exclude = ["visualization"]

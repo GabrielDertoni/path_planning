@@ -655,6 +655,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "map-gen"
+version = "0.1.0"
+dependencies = [
+ "nalgebra 0.29.0",
+ "rrt",
+]
+
+[[package]]
 name = "matrixmultiply"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1124,14 +1132,6 @@ dependencies = [
  "plotters",
  "rand",
  "statrs",
- "vec_array",
-]
-
-[[package]]
-name = "rtree"
-version = "0.1.0"
-dependencies = [
- "nalgebra 0.29.0",
  "vec_array",
 ]
 
