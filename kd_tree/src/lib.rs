@@ -1,14 +1,17 @@
+#![feature(allocator_api, slice_ptr_get, ptr_as_uninit)]
+
 #[cfg(feature = "display")]
 pub mod display;
 
 pub mod visitor;
 
+use std::alloc::{Allocator, Global, Layout};
 use std::borrow::Borrow;
 use std::collections::VecDeque;
 use std::iter::Extend;
 use std::marker::PhantomData;
 use std::mem::ManuallyDrop;
-use std::num::NonZeroUsize;
+use std::ptr::NonNull;
 
 use nalgebra as na;
 
@@ -23,6 +26,14 @@ pub trait HasCoords<const N: usize> {
     fn point(&self) -> na::Point<f32, N> {
         self.coords().into()
     }
+
+    fn get_coord(&self, axis: usize) -> f32 {
+        self.coords()[axis]
+    }
+}
+
+pub trait TypedAllocator<T> {
+    fn alloc(&self, value: T) -> &mut T;
 }
 
 impl<const N: usize> HasCoords<N> for na::Point<f32, N> {
@@ -34,79 +45,53 @@ impl<const N: usize> HasCoords<N> for na::Point<f32, N> {
     }
 }
 
+impl<T, A: TypedAllocator<T>> TypedAllocator<T> for &A {
+    fn alloc(&self, value: T) -> &mut T {
+        (*self).alloc(value)
+    }
+}
+
+impl<T> TypedAllocator<T> for typed_arena::Arena<T> {
+    fn alloc(&self, value: T) -> &mut T {
+        typed_arena::Arena::alloc(self, value)
+    }
+}
+
+impl<T> TypedAllocator<T> for Global {
+    fn alloc(&self, value: T) -> &mut T {
+        unsafe {
+            self.allocate(Layout::new::<T>())
+                .expect("global allocator failed")
+                .as_mut_ptr()
+                .cast::<T>()
+                .as_uninit_mut()
+                .unwrap_unchecked()
+                .write(value)
+        }
+    }
+}
+
 ///
-/// A simple implementation of ca K-D Tree, this implementation could generate very unbalanced trees which
+/// A simple implementation of a K-D Tree, this implementation could generate very unbalanced trees which
 /// would result in very inefficient queries. Use with caution in performance sensitive applications.
 ///
-#[derive(Debug, Clone)]
 pub struct KDTree<P, const N: usize> {
-    nodes: Vec<Slot<Node<P, N>>>,
-    data: Vec<Slot<P>>,
-    next_node_vacant: usize,
-    next_data_vacant: usize,
-    size: usize,
+    alloc: typed_arena::Arena<Node<P, N>>,
+    root: Option<NonNull<Node<P, N>>>,
 }
 
 impl<P, const N: usize> KDTree<P, N>
 where
     P: HasCoords<N> + Sized,
 {
-    #[inline]
-    fn get_root(&self) -> Option<Node<P, N>> {
-        self.get_node(Self::ROOT_IDX)
+    fn get_root(&self) -> Option<&Node<P, N>> {
+        // SAFETY: `root` is valid for the lifetime of the arena, which is the lifetime of self.
+        unsafe { self.root.map(|root| root.as_ref()) }
     }
 
-    #[inline]
-    fn get_node(&self, idx: usize) -> Option<Node<P, N>> {
-        self.nodes.get(idx).map(|&el| el.unwrap())
-    }
-
-    #[inline]
-    fn get_node_mut(&mut self, idx: usize) -> Option<&mut Node<P, N>> {
-        self.nodes.get_mut(idx).map(|el| el.as_mut().unwrap())
-    }
-
-    fn get_vacant_slot(&mut self) -> (VacantSlot<'_, Node<P, N>>, VacantSlot<'_, P>) {
-        let KDTree { next_node_vacant, next_data_vacant, nodes, data, .. } = self;
-        let len = nodes.len();
-
-        let node_slot = if *next_node_vacant == len {
-            nodes.push(Slot::Vacant { next_vacant: len + 1 });
-            nodes[len].unwrap_vacant()
-        } else {
-            nodes[*next_node_vacant].unwrap_vacant()
-        };
-
-        let data_slot = if *next_data_vacant == len {
-            data.push(Slot::Vacant { next_vacant: len + 1 });
-            data[len].unwrap_vacant()
-        } else {
-            data[*next_data_vacant].unwrap_vacant()
-        };
-
-        (node_slot, data_slot)
-    }
-
-    fn add_node(&mut self, p: P) -> (usize, usize) {
-        let node_idx = self.next_node_vacant;
-        let data_idx = self.next_data_vacant;
-
-        let (node_slot, data_slot) = self.get_vacant_slot();
-        let next_node_vacant = node_slot.put(Node::new(data_idx, node_idx));
-        let next_data_vacant = data_slot.put(p);
-
-        self.next_node_vacant = next_node_vacant;
-        self.next_data_vacant = next_data_vacant;
-        self.size += 1;
-
-        (node_idx, data_idx)
-    }
-}
-
-impl<P: HasCoords<N>, const N: usize> KDTree<P, N> {
-    #[inline]
-    fn get_data(&self, idx: usize) -> &P {
-        self.data[idx].as_ref().unwrap()
+    fn get_root_mut(&mut self) -> Option<&mut Node<P, N>> {
+        // SAFETY: `root` is valid for the lifetime of the arena, which is the lifetime of self.
+        unsafe { self.root.map(|mut root| root.as_mut()) }
     }
 }
 
@@ -116,74 +101,22 @@ where
 {
     pub const ROOT_IDX: usize = 0;
 
-    pub fn get_point(&self, idx: usize) -> &P {
-        self.data[idx].as_ref().unwrap()
-    }
-
-    pub fn get_point_mut(&mut self, idx: usize) -> &mut P {
-        self.data[idx].as_mut().unwrap()
-    }
-
     #[inline]
     pub fn new() -> KDTree<P, N> {
         KDTree {
-            nodes: Vec::new(),
-            data: Vec::new(),
-            next_node_vacant: 0,
-            next_data_vacant: 0,
-            size: 0,
+            root: None,
+            alloc: typed_arena::Arena::new(),
         }
     }
 
-    pub fn size(&self) -> usize {
-        self.size
-    }
-
-    pub fn insert(&mut self, p: P) -> usize {
-        if let Some(mut root) = self.get_root() {
-            root.insert(self, p, 0).into()
+    pub fn insert(&mut self, p: P) {
+        let node = NonNull::from(self.alloc.alloc(Node::new(p)));
+        if let Some(root) = self.get_root_mut() {
+            // SAFETY: All nodes are valid.
+            unsafe { root.insert(node, 0); }
         } else {
-            self.add_node(p).1
+            self.root.replace(node);
         }
-    }
-
-    pub fn find_nearest<Q>(&self, p: &Q) -> Option<&P>
-    where
-        Q: HasCoords<N> + ?Sized,
-        P: Borrow<Q>,
-    {
-        let root = self.get_root()?;
-        Some(root.find_nearest(self, p, 0))
-    }
-
-    // TODO: Should return something like a struct NodeRef(&P, usize) instead
-    pub fn find_index_nearest<Q>(&self, p: &Q) -> Option<usize>
-    where
-        Q: HasCoords<N> + ?Sized,
-        P: Borrow<Q>,
-    {
-        let root = self.get_root()?;
-        Some(root.find_index_nearest(self, p, 0))
-    }
-
-    pub fn find_within_radius<Q>(&self, p: &Q, radius: f32) -> Vec<&P>
-    where
-        Q: HasCoords<N> + ?Sized,
-        P: Borrow<Q>,
-    {
-        self.get_root()
-            .map(|root| root.find_within_radius(self, p, radius, 0))
-            .unwrap_or_default()
-    }
-
-    pub fn find_indices_within_radius<Q>(&self, p: &Q, radius: f32) -> Vec<usize>
-    where
-        Q: HasCoords<N> + ?Sized,
-        P: Borrow<Q>,
-    {
-        self.get_root()
-            .map(|root| root.find_indices_within_radius(self, p, radius, 0))
-            .unwrap_or_default()
     }
 
     pub fn query<'a, V, Q>(&'a self, p: &Q, mut vis: V) -> V::Result
@@ -193,23 +126,29 @@ where
         V: Visitor<'a, P>,
     {
         if let Some(root) = self.get_root() {
-            root.query(&mut vis, self, p, 0);
+            // SAFETY: All nodes are valid.
+            unsafe { root.query(&mut vis, p, 0); }
         }
         vis.result()
     }
 
-    pub fn extend_vec(&mut self, points: Vec<P>) {
-        // SAFETY: Since `ManuallyDrop<T>` is #[repr(transparent)] it is safe to transmute.
+    pub fn extend_vec<'a>(&'a mut self, points: Vec<P>) {
+
+        // SAFETY: Since `ManuallyDrop<T>` is #[repr(transparent)] it is sound to transmute.
         let mut points: Vec<ManuallyDrop<P>> = unsafe { std::mem::transmute(points) };
         let slice = points.as_mut_slice();
 
-        if let Some(mut root) = self.get_root() {
-            root.extend_slice(self, slice, 0);
+        let KDTree { ref mut root, ref alloc, .. } = self;
+
+        if let Some(root) = root {
+            // SAFETY: All nodes are valid.
+            unsafe{ root.as_mut().extend_slice(alloc, slice, 0); }
         } else {
-            Node::from_slice(self, slice, 0);
+            Node::from_slice(alloc, slice, 0);
         }
     }
 
+    /*
     pub fn iter(&self) -> impl Iterator<Item = &P> {
         self.data.iter()
             .filter_map(|el| match el {
@@ -218,12 +157,43 @@ where
             })
     }
 
-    pub fn dfs(&self) -> DFSIter<P, N> {
+    pub fn dfs(&self) -> DFSIter<P, A, N> {
         DFSIter::new(self)
     }
+    */
 
-    pub fn rebuild(&mut self) {
-        fn rec_rebuild<P: HasCoords<N>, const N: usize>(nodes: &mut [Node<P, N>], tree: &mut KDTree<P, N>, depth: usize) -> Option<usize> {
+    pub fn depth(&self) -> usize {
+        self.get_root()
+            .map(|root| {
+                // SAFETY: All nodes are valid.
+                unsafe {
+                    root.depth(0)
+                }
+            })
+            .unwrap_or(0)
+    }
+
+    pub fn size(&self) -> usize {
+        self.alloc.len()
+    }
+
+    /// Rebuilds the KD-Tree into a balanced tree. **This operation will invalidate every node
+    /// index aquired before the rebuilding**.
+    pub fn rebuild<'a>(&'a mut self) {
+        fn rec_rebuild<P, const N: usize>(
+            // This `ManuallyDrop` is just to signal that some care must be taken when accessing
+            // these values. The values should only be moved out of the `ManuallyDrop` once.
+            // Alternatively an `Option` could be used, but that would require extra runtime
+            // checks.
+            nodes: &mut [NonNull<Node<P, N>>],
+            depth: usize,
+        ) -> Option<NonNull<Node<P, N>>>
+        where
+            P: HasCoords<N>,
+        {
+            // SAFETY: The lifetime of `nodes[i]` is the lifetime of `self`. This function is
+            // only called within this lifetime.
+            //
             if nodes.is_empty() {
                 return None;
             }
@@ -232,18 +202,22 @@ where
             let axis = depth % N;
 
             nodes.sort_unstable_by(|a, b| {
-                let a = tree.get_point(a.data_idx).coords()[axis];
-                let b = tree.get_point(b.data_idx).coords()[axis];
-                a.partial_cmp(&b).unwrap()
+                unsafe {
+                    let a = a.as_ref().data.get_coord(axis);
+                    let b = b.as_ref().data.get_coord(axis);
+                    a.partial_cmp(&b).unwrap()
+                }
             });
 
             // Finds the maximum value of `mid` such that `points[mid] == median`.
             while let Some(upper) = nodes.get(mid + 1) {
-                let mid_point = tree.get_point(nodes[mid].data_idx).point();
-                let upper = tree.get_point(upper.data_idx).point();
-                // Going one upper would change the value at the `mid` index, so `mid` is right where we want.
-                if upper != mid_point {
-                    break;
+                unsafe {
+                    let mid_point = nodes[mid].as_ref().data.point();
+                    let upper = upper.as_ref().data.point();
+                    // Going one upper would change the value at the `mid` index, so `mid` is right where we want.
+                    if upper != mid_point {
+                        break;
+                    }
                 }
                 mid += 1;
             }
@@ -254,347 +228,62 @@ where
             // a valid index (there has to be at least one element in `points`).
             let (&mut mut median, right) = right.split_first_mut().unwrap();
 
-            let vacant_slot = tree.nodes[tree.next_node_vacant].unwrap_vacant();
-            let node_idx = tree.next_node_vacant;
-            median.node_idx = node_idx;
-            tree.next_node_vacant = vacant_slot.put(median);
+            unsafe {
+                median.as_mut().left = rec_rebuild(left, depth + 1);
+                median.as_mut().right = rec_rebuild(right, depth + 1);
+            }
 
-            let left = rec_rebuild(left, tree, depth + 1)
-                .map(|node| NonZeroUsize::new(node).expect("No child node can have index 0."));
-
-            let right = rec_rebuild(right, tree, depth + 1)
-                .map(|node| NonZeroUsize::new(node).expect("No child node can have index 0."));
-
-            let node = tree.get_node_mut(node_idx).unwrap();
-            node.left = left;
-            node.right = right;
-
-            Some(node_idx)
+            Some(median)
         }
 
-        // The node of index 0 will be the first in the `nodes` vec. This is necessary because when we
-        // recursivelly rebuild the tree, we need to make so that the first node to be put on the nodes
-        // array is the root node so we can keep using `NonZeroUsize`. The reverse is necessary because
-        // then, index 0 will be the last to go on `self.next_node_vacant`, which is where the first node
-        // will be reinserted.
-        let mut nodes: Vec<_> = self.nodes.iter_mut()
-            .enumerate()
-            .rev()
-            .filter_map(|(i, slot)| {
-                if slot.is_occupied() {
-                    let next_vacant = self.next_node_vacant;
-                    let vacant_slot = Slot::Vacant { next_vacant };
-                    self.next_node_vacant = i;
-                    Some(std::mem::replace(slot, vacant_slot).unwrap())
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        let root_idx = rec_rebuild(nodes.as_mut(), self, 0);
-        assert_eq!(root_idx, Some(0));
-    }
-}
-
-impl<P, const N: usize> Default for KDTree<P, N>
-where
-    P: HasCoords<N>,
-{
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-enum Slot<T> {
-    Occupied(T),
-    Vacant {
-        next_vacant: usize
-    },
-}
-
-impl<T> Slot<T> {
-    fn unwrap(self) -> T {
-        match self {
-            Slot::Occupied(val) => val,
-            _                   => panic!("unwrapped vacant entry"),
-        }
-    }
-
-    fn unwrap_vacant(&mut self) -> VacantSlot<'_, T> {
-        VacantSlot::new(self)
-            .expect("unwrapped vacant on occupied entry")
-    }
-
-    fn as_ref(&self) -> Slot<&T> {
-        match *self {
-            Slot::Occupied(ref val)      => Slot::Occupied(val),
-            Slot::Vacant { next_vacant } => Slot::Vacant { next_vacant },
-        }
-    }
-
-    fn as_mut(&mut self) -> Slot<&mut T> {
-        match *self {
-            Slot::Occupied(ref mut val)  => Slot::Occupied(val),
-            Slot::Vacant { next_vacant } => Slot::Vacant { next_vacant },
-        }
-    }
-
-    fn replace(&mut self, new: T) -> Slot<T> {
-        std::mem::replace(self, Slot::Occupied(new))
-    }
-
-    fn is_occupied(&self) -> bool {
-        match *self {
-            Slot::Occupied(_) => true,
-            Slot::Vacant{..}  => false,
-        }
-    }
-}
-
-struct VacantSlot<'a, T> {
-    slot: &'a mut Slot<T>,
-}
-
-impl<'a, T> VacantSlot<'a, T> {
-    fn new(slot: &'a mut Slot<T>) -> Option<Self> {
-        match *slot {
-            Slot::Vacant {..}  => Some(VacantSlot { slot }),
-            Slot::Occupied(..) => None,
-        }
-    }
-
-    fn next_vacant(&self) -> usize {
-        match *self.slot {
-            Slot::Vacant { next_vacant } => next_vacant,
-            _ => unreachable!(),
-        }
-    }
-
-    fn put(self, val: T) -> usize {
-        let old = std::mem::replace(self.slot, Slot::Occupied(val));
-        match old {
-            Slot::Vacant { next_vacant } => next_vacant,
-            _ => unreachable!(),
-        }
+        let mut nodes: Box<[_]> = self.alloc.iter_mut().map(NonNull::from).collect();
+        self.root = rec_rebuild(nodes.as_mut(), 0);
     }
 }
 
 #[derive(Debug)]
-struct Node<P, const N: usize> {
-    data_idx: usize,
-    node_idx: usize,
-    left: Option<NonZeroUsize>,
-    right: Option<NonZeroUsize>,
-    _marker: PhantomData<P>,
+pub struct Node<P, const N: usize> {
+    data: P,
+    left: Option<NonNull<Node<P, N>>>,
+    right: Option<NonNull<Node<P, N>>>,
 }
-
-// For some reason it didn't work deriving `Clone` and `Copy` directly.
-impl<P, const N: usize> Clone for Node<P, N> {
-    fn clone(&self) -> Self {
-        Node {
-            data_idx: self.data_idx,
-            node_idx: self.node_idx,
-            left: self.left,
-            right: self.right,
-            _marker: self._marker,
-        }
-    }
-}
-impl<P, const N: usize> Copy for Node<P, N> {}
 
 impl<P, const N: usize> Node<P, N>
 where
     P: HasCoords<N>,
 {
-    fn new(data_idx: usize, node_idx: usize) -> Self {
+    fn new(data: P) -> Self {
         Node {
-            data_idx,
-            node_idx,
+            data,
             left: None,
             right: None,
-            _marker: PhantomData,
         }
     }
 
-    #[inline(always)]
-    fn get_data<'a>(&self, tree: &'a KDTree<P, N>) -> &'a P {
-        tree.get_data(self.data_idx)
-    }
-
-    #[inline(always)]
-    fn get_left(&self, tree: &KDTree<P, N>) -> Option<Self> {
-        tree.get_node(self.left?.into())
-    }
-
-    #[inline(always)]
-    fn get_right(&self, tree: &KDTree<P, N>) -> Option<Self> {
-        tree.get_node(self.right?.into())
-    }
-
-    #[inline(always)]
-    fn write(&self, tree: &mut KDTree<P, N>) {
-        tree.nodes[self.node_idx].replace(*self);
-    }
-
-    fn insert(&mut self, tree: &mut KDTree<P, N>, p: P, depth: usize) -> NonZeroUsize
-    where
-        P: HasCoords<N>,
-    {
+    /// SAFETY: The caller must guarantee that `node` and `self` are valid as well as all of the
+    /// children of `self`.
+    unsafe fn insert(&mut self, node: NonNull<Node<P, N>>, depth: usize) {
         let axis = depth % N;
-        let median = self.get_data(tree);
+        let median = &self.data;
 
-        let ret = if p.coords()[axis] <= median.coords()[axis] {
-            if let Some(mut child) = self.get_left(tree) {
-                child.insert(tree, p, depth + 1)
+        if node.as_ref().data.get_coord(axis) <= median.get_coord(axis) {
+            if let Some(mut child) = self.left {
+                child.as_mut().insert(node, depth + 1);
             } else {
-                let node_idx = NonZeroUsize::new(tree.add_node(p).0)
-                    .expect("Child node cannot have index 0");
-
-                self.left.replace(node_idx);
-                node_idx
+                self.left.replace(node);
             }
-        } else if let Some(child) = &mut self.get_right(tree) {
-            child.insert(tree, p, depth + 1)
+        } else if let Some(mut child) = self.right {
+            child.as_mut().insert(node, depth + 1);
         } else {
-            let node_idx = NonZeroUsize::new(tree.add_node(p).0)
-                .expect("Child node cannot have index 0");
-
-            self.right.replace(node_idx);
-            node_idx
-        };
-        self.write(tree);
-        ret
-    }
-
-    fn find_nearest<'a, Q>(&self, tree: &'a KDTree<P, N>, p: &Q, depth: usize) -> &'a P
-    where
-        Q: HasCoords<N> + ?Sized,
-        P: Borrow<Q> + HasCoords<N>,
-    {
-        tree.get_point(self.find_index_nearest(tree, p, depth))
-    }
-
-    fn find_index_nearest<'a, Q>(&self, tree: &'a KDTree<P, N>, p: &Q, depth: usize) -> usize
-    where
-        Q: HasCoords<N> + ?Sized,
-        P: Borrow<Q> + HasCoords<N>,
-    {
-        let p = p.borrow();
-        let axis = depth % N;
-
-        let p_ax = p.coords()[axis];
-        let median = self.get_data(tree);
-        let m_ax = median.coords()[axis];
-
-        let is_left = p_ax <= m_ax;
-
-        // We first follow the axis comparison to get a first candidate of nearest point.
-        let (fst, snd) = if is_left {
-            (self.get_left(tree), self.get_right(tree))
-        } else {
-            (self.get_right(tree), self.get_left(tree))
-        };
-
-        let this_side_idx = fst
-            .map(|child| child.find_index_nearest(tree, p, depth + 1))
-            .unwrap_or(self.node_idx);
-
-        let this_side = tree.get_point(this_side_idx);
-        // If we the point that we found has a distance that is too large, then there may be
-        // points on the other side that should be considered.
-        let dist_sq = na::distance_squared(&this_side.point(), &p.point());
-
-        Some((median, self.node_idx))
-            .into_iter()
-            .chain(Some((this_side, this_side_idx)))
-            .chain(if dist_sq > (p_ax - m_ax).powi(2) {
-                snd.map(|child| child.find_index_nearest(tree, p, depth + 1))
-                    .map(|i| (tree.get_point(i), i))
-            } else {
-                None
-            })
-            .min_by(|&(a, _), &(b, _)| {
-                let p = p.borrow().point();
-                let da = na::distance_squared(&a.point(), &p);
-                let db = na::distance_squared(&b.point(), &p);
-                da.partial_cmp(&db).unwrap()
-            })
-            .unwrap()
-            .1
-    }
-
-    fn find_within_radius<'a, Q>(
-        &self,
-        tree: &'a KDTree<P, N>,
-        p: &Q,
-        radius: f32,
-        depth: usize,
-    ) -> Vec<&'a P>
-    where
-        Q: HasCoords<N> + ?Sized,
-        P: Borrow<Q> + HasCoords<N>,
-    {
-        // This is preatty bad... It is going to allocate an entirely new vector just for this.
-        self.find_indices_within_radius(tree, p, radius, depth)
-            .into_iter()
-            .map(|p| tree.get_point(p))
-            .collect()
-    }
-
-    // TODO: It might be nicer to return an iterator. That would be more memory efficient and could also be faster.
-    fn find_indices_within_radius<'a, Q>(
-        &self,
-        tree: &'a KDTree<P, N>,
-        p: &Q,
-        radius: f32,
-        depth: usize,
-    ) -> Vec<usize>
-    where
-        Q: HasCoords<N> + ?Sized,
-        P: Borrow<Q> + HasCoords<N>,
-    {
-        let p = p.borrow();
-        let axis = depth % N;
-
-        let p_ax = p.coords()[axis];
-        let median = self.get_data(tree);
-        let m_ax = median.coords()[axis];
-
-        let is_left = p_ax <= m_ax;
-
-        // We first follow the axis comparison to get a first candidate of nearest point.
-        let (fst, snd) = if is_left {
-            (self.get_left(tree), self.get_right(tree))
-        } else {
-            (self.get_right(tree), self.get_left(tree))
-        };
-
-        let dist_sq = na::distance_squared(&median.point(), &p.point());
-
-        let mut within_radius = fst
-            .map(|child| child.find_indices_within_radius(tree, p, radius, depth + 1))
-            .unwrap_or_default();
-
-        if dist_sq <= radius.powi(2) {
-            within_radius.push(self.node_idx);
+            self.right.replace(node);
         }
-
-        if radius > (p_ax - m_ax).abs() {
-            within_radius.extend(
-                snd.map(|child| child.find_indices_within_radius(tree, p, radius, depth + 1))
-                    .unwrap_or_default(),
-            )
-        }
-
-        within_radius
     }
 
-    pub fn query<'a, V, Q>(
-        &self,
+    /// SAFETY: The caller must guarantee that `self` is valid as well as its its children of
+    /// `self`.
+    unsafe fn query<'a, V, Q>(
+        &'a self,
         visitor: &mut V,
-        tree: &'a KDTree<P, N>,
         p: &Q,
         depth: usize,
     )
@@ -606,40 +295,40 @@ where
         let p = p.borrow();
         let axis = depth % N;
 
-        let p_ax = p.coords()[axis];
-        let median = self.get_data(tree);
-        let m_ax = median.coords()[axis];
+        let p_ax = p.get_coord(axis);
+        let median = &self.data;
+        let m_ax = median.get_coord(axis);
 
         let is_left = p_ax <= m_ax;
 
         // We first follow the axis comparison to get a first candidate of nearest point.
         let (fst, snd) = if is_left {
-            (self.get_left(tree), self.get_right(tree))
+            (self.left, self.right)
         } else {
-            (self.get_right(tree), self.get_left(tree))
+            (self.right, self.left)
         };
 
         if let Some(child) = fst {
-            child.query(visitor, tree, p, depth + 1);
+            child.as_ref().query(visitor, p, depth + 1);
         }
 
-        let dist_sq = na::distance_squared(&median.point(), &p.point());
-        if dist_sq <= visitor.radius(p).powi(2) {
-            visitor.accept(median, self.data_idx, p);
+        if na::distance_squared(&median.point(), &p.point()) <= visitor.radius_sq(p) {
+            visitor.accept(median, p);
         }
 
-        if visitor.radius(p) > (p_ax - m_ax).abs() {
+        if visitor.radius_sq(p) > (p_ax - m_ax).abs().powi(2) {
             if let Some(child) = snd {
-                child.query(visitor, tree, p, depth + 1);
+                child.as_ref().query(visitor, p, depth + 1);
             }
         }
     }
 
-    // The caller of this function CANNOT drop any of the values in the `points` slice, since they will all
-    // be consumed by the function.
-    fn extend_slice(
+    // SAFETY: The caller of this function CANNOT drop any of the values in the `points` slice,
+    // since they will all be consumed by the function. The caller must also guarantee that `self`
+    // and all of its children are valid.
+    unsafe fn extend_slice(
         &mut self,
-        tree: &mut KDTree<P, N>,
+        allocator: &typed_arena::Arena<Self>,
         points: &mut [ManuallyDrop<P>],
         depth: usize,
     ) {
@@ -647,40 +336,35 @@ where
             return;
         };
         let axis = depth % N;
-        let median = self.get_data(tree);
-        let m_ax = median.coords()[axis];
+        let median = &self.data;
+        let m_ax = median.get_coord(axis);
 
         // Lots of unwraps... Maybe there is a better way.
-        points.sort_unstable_by(|a, b| a.coords()[axis].partial_cmp(&b.coords()[axis]).unwrap());
+        points.sort_unstable_by(|a, b| a.get_coord(axis).partial_cmp(&b.get_coord(axis)).unwrap());
 
-        let mid = points.partition_point(|p| p.coords()[axis] <= m_ax);
+        let mid = points.partition_point(|p| p.get_coord(axis) <= m_ax);
         let (left, right) = points.split_at_mut(mid);
 
-        if let Some(mut child) = self.get_left(tree) {
-            child.extend_slice(tree, left, depth + 1);
+        if let Some(mut child) = self.left {
+            child.as_mut().extend_slice(allocator, left, depth + 1);
         } else {
-            self.left = Node::from_slice(tree, left, depth + 1)
-                .map(|node| NonZeroUsize::new(node).expect("No child node can have index 0."));
+            self.left = Node::from_slice(allocator, left, depth + 1);
         }
 
-        if let Some(mut child) = self.get_right(tree) {
-            child.extend_slice(tree, right, depth + 1);
+        if let Some(mut child) = self.right {
+            child.as_mut().extend_slice(allocator, right, depth + 1);
         } else {
-            self.right = Node::from_slice(tree, right, depth + 1)
-                .map(|node| NonZeroUsize::new(node).expect("No child node can have index 0."));
+            self.right = Node::from_slice(allocator, right, depth + 1);
         }
-
-        // We write the changes back to the tree.
-        self.write(tree);
     }
 
-    // The caller of this function CANNOT drop any of the values in the `points` slice, since they will all
-    // be consumed by the function.
+    // SAFETY: The caller of this function CANNOT drop any of the values in the `points` slice,
+    // since they will all be consumed by the function.
     fn from_slice(
-        tree: &mut KDTree<P, N>,
+        allocator: &typed_arena::Arena<Self>,
         points: &mut [ManuallyDrop<P>],
         depth: usize,
-    ) -> Option<usize>
+    ) -> Option<NonNull<Node<P, N>>>
     {
         if points.is_empty() {
             return None;
@@ -689,7 +373,7 @@ where
         let axis = depth % N;
 
         // Lots of unwraps... Maybe there is a better way.
-        points.sort_unstable_by(|a, b| a.coords()[axis].partial_cmp(&b.coords()[axis]).unwrap());
+        points.sort_unstable_by(|a, b| a.get_coord(axis).partial_cmp(&b.get_coord(axis)).unwrap());
 
         let mut mid = points.len() / 2;
 
@@ -712,23 +396,33 @@ where
         // The caller of this function must know not to drop this value.
         let median = unsafe { ManuallyDrop::take(median) };
 
-        let node_idx = tree.add_node(median).0;
+        let node = allocator.alloc(Node::new(median));
 
-        let left = Node::from_slice(tree, left, depth + 1)
-            .map(|node| NonZeroUsize::new(node).expect("No child node can have index 0."));
+        node.left = Node::from_slice(allocator, left, depth + 1);
+        node.right = Node::from_slice(allocator, right, depth + 1);
 
-        let right = Node::from_slice(tree, right, depth + 1)
-            .map(|node| NonZeroUsize::new(node).expect("No child node can have index 0."));
+        Some(NonNull::from(node))
+    }
 
-        let node = tree.get_node_mut(node_idx).unwrap();
-        node.left = left;
-        node.right = right;
-
-        Some(node_idx)
+    /// SAFETY: The caller must guarantee that `self` and all of its children are valid.
+    unsafe fn depth(&self, depth: usize) -> usize {
+        self.left
+            .map(|left| left.as_ref().depth(depth + 1))
+            .and_then(|left_depth| {
+                self.right
+                    .map(|right| right.as_ref().depth(depth + 1))
+                    .map(|right_depth| right_depth.max(left_depth))
+            })
+            .unwrap_or(depth)
     }
 }
 
-impl<P: HasCoords<N>, const N: usize> Extend<P> for KDTree<P, N> {
+/*
+impl<'alloc, P, A, const N: usize> Extend<P> for KDTree<'alloc, P, N, A>
+where
+    P: HasCoords<N>,
+    A: TypedAllocator<Node<'alloc, P, N>> + 'alloc,
+{
     fn extend<T>(&mut self, iter: T)
     where
         T: IntoIterator<Item = P>,
@@ -739,13 +433,17 @@ impl<P: HasCoords<N>, const N: usize> Extend<P> for KDTree<P, N> {
     }
 }
 
-pub struct DFSIter<'a, P, const N: usize> {
-    tree: &'a KDTree<P, N>,
+pub struct DFSIter<'a, P, A: Allocator + Copy, const N: usize> {
+    tree: &'a KDTree<P, N, A>,
     queue: VecDeque<Node<P, N>>,
 }
 
-impl<'a, P: HasCoords<N>, const N: usize> DFSIter<'a, P, N> {
-    fn new(tree: &'a KDTree<P, N>) -> DFSIter<'a, P, N> {
+impl<'a, P, A, const N: usize> DFSIter<'a, P, A, N>
+where
+    P: HasCoords<N>,
+    A: Allocator + Copy,
+{
+    fn new(tree: &'a KDTree<P, N, A>) -> DFSIter<'a, P, A, N> {
         DFSIter {
             tree,
             queue: tree.get_root().into_iter().collect(),
@@ -753,7 +451,11 @@ impl<'a, P: HasCoords<N>, const N: usize> DFSIter<'a, P, N> {
     }
 }
 
-impl<'a, P: HasCoords<N>, const N: usize> Iterator for DFSIter<'a, P, N> {
+impl<'a, P, A, const N: usize> Iterator for DFSIter<'a, P, A, N>
+where
+    P: HasCoords<N>,
+    A: Allocator + Copy,
+{
     type Item = &'a P;
 
     fn next(&mut self) -> Option<&'a P> {
@@ -770,6 +472,7 @@ impl<'a, P: HasCoords<N>, const N: usize> Iterator for DFSIter<'a, P, N> {
         Some(next.get_data(self.tree))
     }
 }
+*/
 
 #[cfg(test)]
 mod test {

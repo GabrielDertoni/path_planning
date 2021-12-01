@@ -8,6 +8,15 @@ edition = "2021"
 [dependencies]
 nalgebra = { version = "^0.29", features = ["rand"] }
 ptree = { version = "^0.3.2", optional = true }
+typed-arena = "2.0.1"
+
+[dev-dependencies]
+criterion = "0.3"
+rand = "0.8.5"
 
 [features]
 display = [ "ptree" ]
+
+[[bench]]
+name = "uniform_random"
+harness = false

@@ -30,6 +30,7 @@ macro_rules! impl_default_with_new {
 /// the tree, it would suffice to always return `f32::INFINITY` from `radius`.
 ///
 /// The lifetime `'a` is the lifetime of the KD-Tree.
+// TODO: This trait should also carry the `const N: usize`.
 pub trait Visitor<'a, P> {
     /// The final result of the visitor.
     type Result;
@@ -42,71 +43,34 @@ pub trait Visitor<'a, P> {
         Q: HasCoords<N> + ?Sized,
         P: Borrow<Q>;
 
-    /// Accept a point with data `point` and index into the KD-Tree `index`. `other` is
-    /// the reference point that is used to navigate the KD-Tree.
-    fn accept<Q, const N: usize>(&mut self, point: &'a P, index: usize, other: &Q)
+    /// Accept a point with data `point` of the KD-Tree. `other` is the reference point that is
+    /// used to navigate the KD-Tree.
+    fn accept<Q, const N: usize>(&mut self, point: &'a P, other: &Q)
     where
         Q: HasCoords<N> + ?Sized,
         P: Borrow<Q>;
 
     /// Consume the visitor into the final result.
     fn result(self) -> Self::Result;
-}
 
-/// A visitor that returns the index of the nearest point to the reference point
-pub struct NearestIndexedVisitor<'a, P> {
-    min: Option<(usize, &'a P)>,
-}
-
-impl<'a, P> NearestIndexedVisitor<'a, P> {
-    pub fn new() -> Self {
-        NearestIndexedVisitor { min: None }
-    }
-}
-
-impl<'a, P> Visitor<'a, P> for NearestIndexedVisitor<'a, P> {
-    type Result = Option<(usize, &'a P)>;
-
-    fn radius<Q, const N: usize>(&self, other: &Q) -> f32
+    /// Calculates the radius squared. May be overwritten for better performance.
+    fn radius_sq<Q, const N: usize>(&self, other: &Q) -> f32
     where
         Q: HasCoords<N> + ?Sized,
         P: Borrow<Q>,
     {
-        if let Some((_, min)) = self.min {
-            na::distance(&min.borrow().point(), &other.point())
-        } else {
-            f32::INFINITY
-        }
-    }
-
-    fn accept<Q, const N: usize>(&mut self, point: &'a P, index: usize, other: &Q)
-    where
-        Q: HasCoords<N> + ?Sized,
-        P: Borrow<Q>,
-    {
-        let dist = na::distance(&point.borrow().point(), &other.point());
-        if self.radius(other) > dist {
-            self.min.replace((index, point));
-        }
-    }
-
-    fn result(self) -> Option<(usize, &'a P)> {
-        self.min
+        self.radius(other).powi(2)
     }
 }
-
-impl_default_with_new! { impl<'a, P> Default for NearestIndexedVisitor<'a, P> }
 
 /// A visitor that returns the nearest point to the reference point
 pub struct NearestVisitor<'a, P> {
-    inner: NearestIndexedVisitor<'a, P>,
+    min: Option<&'a P>,
 }
 
 impl<'a, P> NearestVisitor<'a, P> {
     pub fn new() -> Self {
-        NearestVisitor {
-            inner: NearestIndexedVisitor::new(),
-        }
+        NearestVisitor { min: None }
     }
 }
 
@@ -118,64 +82,42 @@ impl<'a, P> Visitor<'a, P> for NearestVisitor<'a, P> {
         Q: HasCoords<N> + ?Sized,
         P: Borrow<Q>,
     {
-        self.inner.radius(other)
-    }
-
-    fn accept<Q, const N: usize>(&mut self, point: &'a P, index: usize, other: &Q)
-    where
-        Q: HasCoords<N> + ?Sized,
-        P: Borrow<Q>,
-    {
-        self.inner.accept(point, index, other)
-    }
-
-    fn result(self) -> Option<&'a P> {
-        self.inner.result().map(|r| r.1)
-    }
-}
-
-impl_default_with_new! { impl<'a, P> Default for NearestVisitor<'a, P> }
-
-pub struct WithinRadiusIndexedVisitor<'a, P> {
-    within_radius: Vec<(usize, &'a P)>,
-    radius: f32,
-}
-
-impl<'a, P> WithinRadiusIndexedVisitor<'a, P> {
-    pub fn new(radius: f32) -> Self {
-        WithinRadiusIndexedVisitor {
-            within_radius: Vec::new(),
-            radius,
+        if let Some(min) = self.min {
+            na::distance(&min.borrow().point(), &other.point())
+        } else {
+            f32::INFINITY
         }
     }
-}
 
-impl<'a, P> Visitor<'a, P> for WithinRadiusIndexedVisitor<'a, P> {
-    type Result = Vec<(usize, &'a P)>;
-
-    fn radius<Q, const N: usize>(&self, _: &Q) -> f32
-    where
-        Q: HasCoords<N> + ?Sized,
-        P: Borrow<Q>,
-    {
-        self.radius
-    }
-
-    fn accept<Q, const N: usize>(&mut self, point: &'a P, index: usize, other: &Q)
+    fn accept<Q, const N: usize>(&mut self, point: &'a P, other: &Q)
     where
         Q: HasCoords<N> + ?Sized,
         P: Borrow<Q>,
     {
         let dist = na::distance_squared(&point.borrow().point(), &other.point());
-        if dist <= self.radius.powi(2) {
-            self.within_radius.push((index, point));
+        if self.radius_sq(other) > dist {
+            self.min.replace(point);
         }
     }
 
-    fn result(self) -> Vec<(usize, &'a P)> {
-        self.within_radius
+    fn result(self) -> Option<&'a P> {
+        self.min
+    }
+
+    fn radius_sq<Q, const N: usize>(&self, other: &Q) -> f32
+    where
+        Q: HasCoords<N> + ?Sized,
+        P: Borrow<Q>,
+    {
+        if let Some(min) = self.min {
+            na::distance_squared(&min.borrow().point(), &other.point())
+        } else {
+            f32::INFINITY
+        }
     }
 }
+
+impl_default_with_new! { impl<'a, P> Default for NearestVisitor<'a, P> }
 
 pub struct WithinRadiusVisitor<'a, P> {
     within_radius: Vec<&'a P>,
@@ -202,7 +144,7 @@ impl<'a, P> Visitor<'a, P> for WithinRadiusVisitor<'a, P> {
         self.radius
     }
 
-    fn accept<Q, const N: usize>(&mut self, point: &'a P, _: usize, other: &Q)
+    fn accept<Q, const N: usize>(&mut self, point: &'a P, other: &Q)
     where
         Q: HasCoords<N> + ?Sized,
         P: Borrow<Q>,
@@ -214,47 +156,6 @@ impl<'a, P> Visitor<'a, P> for WithinRadiusVisitor<'a, P> {
     }
 
     fn result(self) -> Vec<&'a P> {
-        self.within_radius
-    }
-}
-
-pub struct WithinRadiusIndicesVisitor {
-    within_radius: Vec<usize>,
-    radius: f32,
-}
-
-impl WithinRadiusIndicesVisitor {
-    pub fn new(radius: f32) -> Self {
-        WithinRadiusIndicesVisitor {
-            within_radius: Vec::new(),
-            radius,
-        }
-    }
-}
-
-impl<'a, P> Visitor<'a, P> for WithinRadiusIndicesVisitor {
-    type Result = Vec<usize>;
-
-    fn radius<Q, const N: usize>(&self, _: &Q) -> f32
-    where
-        Q: HasCoords<N> + ?Sized,
-        P: Borrow<Q>,
-    {
-        self.radius
-    }
-
-    fn accept<Q, const N: usize>(&mut self, point: &'a P, index: usize, other: &Q)
-    where
-        Q: HasCoords<N> + ?Sized,
-        P: Borrow<Q>,
-    {
-        let dist = na::distance_squared(&point.borrow().point(), &other.point());
-        if dist <= self.radius.powi(2) {
-            self.within_radius.push(index);
-        }
-    }
-
-    fn result(self) -> Vec<usize> {
         self.within_radius
     }
 }
@@ -294,13 +195,13 @@ where
         self.vis.radius(other)
     }
 
-    fn accept<Q, const N: usize>(&mut self, point: &'a P, index: usize, other: &Q)
+    fn accept<Q, const N: usize>(&mut self, point: &'a P, other: &Q)
     where
         Q: HasCoords<N> + ?Sized,
         P: Borrow<Q>,
     {
         if (self.prec)(point) {
-            self.vis.accept(point, index, other);
+            self.vis.accept(point, other);
         }
     }
 
@@ -309,44 +210,7 @@ where
     }
 }
 
-pub struct AcceptAllIndexedVisitor<'a, P> {
-    accepted: Vec<(usize, &'a P)>,
-}
-
-impl<'a, P> AcceptAllIndexedVisitor<'a, P> {
-    pub fn new() -> Self {
-        AcceptAllIndexedVisitor {
-            accepted: Vec::new(),
-        }
-    }
-}
-
-impl<'a, P> Visitor<'a, P> for AcceptAllIndexedVisitor<'a, P> {
-    type Result = Vec<(usize, &'a P)>;
-
-    fn radius<Q, const N: usize>(&self, _: &Q) -> f32
-    where
-        Q: HasCoords<N> + ?Sized,
-        P: Borrow<Q>,
-    {
-        f32::INFINITY
-    }
-
-    fn accept<Q, const N: usize>(&mut self, point: &'a P, index: usize, _: &Q)
-    where
-        Q: HasCoords<N> + ?Sized,
-        P: Borrow<Q>,
-    {
-        self.accepted.push((index, point));
-    }
-
-    fn result(self) -> Vec<(usize, &'a P)> {
-        self.accepted
-    }
-}
-
-impl_default_with_new! { impl<'a, P> Default for AcceptAllIndexedVisitor<'a, P> }
-
+/*
 pub struct AcceptAllIndicesVisitor {
     accepted: Vec<usize>,
 }
@@ -384,3 +248,4 @@ impl<'a, P> Visitor<'a, P> for AcceptAllIndicesVisitor {
 }
 
 impl_default_with_new! { impl Default for AcceptAllIndicesVisitor }
+*/
