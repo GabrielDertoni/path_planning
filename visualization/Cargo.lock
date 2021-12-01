@@ -767,7 +767,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rust-webpack-template"
+name = "rrt-vis"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
