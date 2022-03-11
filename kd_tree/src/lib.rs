@@ -32,42 +32,12 @@ pub trait HasCoords<const N: usize> {
     }
 }
 
-pub trait TypedAllocator<T> {
-    fn alloc(&self, value: T) -> &mut T;
-}
-
 impl<const N: usize> HasCoords<N> for na::Point<f32, N> {
     #[inline]
     fn coords(&self) -> [f32; N] {
         let mut array = [0.0; N];
         array.copy_from_slice(self.coords.data.as_slice());
         array
-    }
-}
-
-impl<T, A: TypedAllocator<T>> TypedAllocator<T> for &A {
-    fn alloc(&self, value: T) -> &mut T {
-        (*self).alloc(value)
-    }
-}
-
-impl<T> TypedAllocator<T> for typed_arena::Arena<T> {
-    fn alloc(&self, value: T) -> &mut T {
-        typed_arena::Arena::alloc(self, value)
-    }
-}
-
-impl<T> TypedAllocator<T> for Global {
-    fn alloc(&self, value: T) -> &mut T {
-        unsafe {
-            self.allocate(Layout::new::<T>())
-                .expect("global allocator failed")
-                .as_mut_ptr()
-                .cast::<T>()
-                .as_uninit_mut()
-                .unwrap_unchecked()
-                .write(value)
-        }
     }
 }
 
