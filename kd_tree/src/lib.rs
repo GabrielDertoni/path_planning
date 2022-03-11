@@ -5,11 +5,10 @@ pub mod display;
 
 pub mod visitor;
 
-use std::alloc::{Allocator, Global, Layout};
 use std::borrow::Borrow;
+use std::cell::Cell;
 use std::collections::VecDeque;
 use std::iter::Extend;
-use std::marker::PhantomData;
 use std::mem::ManuallyDrop;
 use std::ptr::NonNull;
 
@@ -46,8 +45,9 @@ impl<const N: usize> HasCoords<N> for na::Point<f32, N> {
 /// would result in very inefficient queries. Use with caution in performance sensitive applications.
 ///
 pub struct KDTree<P, const N: usize> {
+    // Should not be used directly, instead, should be used through `alloc_node`.
     alloc: typed_arena::Arena<Node<P, N>>,
-    root: Option<NonNull<Node<P, N>>>,
+    root: Cell<Option<*const Node<P, N>>>,
 }
 
 impl<P, const N: usize> KDTree<P, N>
@@ -56,12 +56,25 @@ where
 {
     fn get_root(&self) -> Option<&Node<P, N>> {
         // SAFETY: `root` is valid for the lifetime of the arena, which is the lifetime of self.
-        unsafe { self.root.map(|root| root.as_ref()) }
+        unsafe { self.root.get().map(|root| &*root) }
     }
 
-    fn get_root_mut(&mut self) -> Option<&mut Node<P, N>> {
-        // SAFETY: `root` is valid for the lifetime of the arena, which is the lifetime of self.
-        unsafe { self.root.map(|mut root| root.as_mut()) }
+    fn alloc_node(&self, value: P) -> *const Node<P, N> {
+        self.alloc.alloc(Node::new(value))
+    }
+
+    fn node_iter(&self) -> impl Iterator<Item = &Node<P, N>> {
+        // SAFETY: Let's hope this isn't UB. Typed arena can't give an immutable iterator because
+        // it gives mutable references on the `alloc` function. However, `alloc` only takes an
+        // immutable reference to the arena itself. This means that with an immutable iterator some
+        // user could get a mutable reference from the arena, and then an immutable one with the
+        // iterator. However, in this KD-Tree implementation, we only ever use `alloc` through
+        // `alloc_node` which will only return a `const` pointer. We never need a mutable reference
+        // into a node. Therefore, it should be ok to give out an immutable iterator to the nodes.
+        unsafe {
+            let alloc_mut = NonNull::from(&self.alloc).as_mut();
+            alloc_mut.iter_mut().map(|mut_ref| &*mut_ref)
+        }
     }
 }
 
@@ -74,19 +87,24 @@ where
     #[inline]
     pub fn new() -> KDTree<P, N> {
         KDTree {
-            root: None,
+            root: Cell::new(None),
             alloc: typed_arena::Arena::new(),
         }
     }
 
-    pub fn insert(&mut self, p: P) {
-        let node = NonNull::from(self.alloc.alloc(Node::new(p)));
-        if let Some(root) = self.get_root_mut() {
+    /// Inserts a point into the KD-Tree. This operation will modify the tree, but won't invalidate
+    /// any references to `P`s inside the tree, thus it only requires an immutable reference.
+    pub fn insert(&self, p: P) -> &P {
+        let node = self.alloc_node(p);
+        if let Some(root) = self.get_root() {
             // SAFETY: All nodes are valid.
             unsafe { root.insert(node, 0); }
         } else {
-            self.root.replace(node);
+            self.root.set(Some(node));
         }
+
+        // SAFETY: `node` is valid through the lifetime of `self`.
+        unsafe { &(*node).data }
     }
 
     pub fn query<'a, V, Q>(&'a self, p: &Q, mut vis: V) -> V::Result
@@ -102,31 +120,25 @@ where
         vis.result()
     }
 
-    pub fn extend_vec<'a>(&'a mut self, points: Vec<P>) {
-
+    pub fn extend_vec<'a>(&'a self, points: Vec<P>) {
         // SAFETY: Since `ManuallyDrop<T>` is #[repr(transparent)] it is sound to transmute.
         let mut points: Vec<ManuallyDrop<P>> = unsafe { std::mem::transmute(points) };
         let slice = points.as_mut_slice();
 
-        let KDTree { ref mut root, ref alloc, .. } = self;
-
-        if let Some(root) = root {
+        if let Some(root) = self.root.get() {
             // SAFETY: All nodes are valid.
-            unsafe{ root.as_mut().extend_slice(alloc, slice, 0); }
+            unsafe { (*root).extend_slice(&|p| self.alloc_node(p), slice, 0); }
         } else {
-            Node::from_slice(alloc, slice, 0);
+            Node::from_slice(&|p| self.alloc_node(p), slice, 0);
         }
     }
 
-    /*
+    #[inline(always)]
     pub fn iter(&self) -> impl Iterator<Item = &P> {
-        self.data.iter()
-            .filter_map(|el| match el {
-                Slot::Occupied(el) => Some(el),
-                Slot::Vacant {..}  => None,
-            })
+        self.node_iter().map(|node| &node.data)
     }
 
+    /*
     pub fn dfs(&self) -> DFSIter<P, A, N> {
         DFSIter::new(self)
     }
@@ -149,21 +161,21 @@ where
 
     /// Rebuilds the KD-Tree into a balanced tree. **This operation will invalidate every node
     /// index aquired before the rebuilding**.
-    pub fn rebuild<'a>(&'a mut self) {
+    pub fn rebuild<'a>(&'a self) {
         fn rec_rebuild<P, const N: usize>(
             // This `ManuallyDrop` is just to signal that some care must be taken when accessing
             // these values. The values should only be moved out of the `ManuallyDrop` once.
             // Alternatively an `Option` could be used, but that would require extra runtime
             // checks.
-            nodes: &mut [NonNull<Node<P, N>>],
+            nodes: &mut [*const Node<P, N>],
             depth: usize,
-        ) -> Option<NonNull<Node<P, N>>>
+        ) -> Option<*const Node<P, N>>
         where
             P: HasCoords<N>,
         {
             // SAFETY: The lifetime of `nodes[i]` is the lifetime of `self`. This function is
             // only called within this lifetime.
-            //
+
             if nodes.is_empty() {
                 return None;
             }
@@ -171,19 +183,19 @@ where
             let mut mid = nodes.len() / 2;
             let axis = depth % N;
 
-            nodes.sort_unstable_by(|a, b| {
+            nodes.sort_unstable_by(|&a, &b| {
                 unsafe {
-                    let a = a.as_ref().data.get_coord(axis);
-                    let b = b.as_ref().data.get_coord(axis);
+                    let a = (*a).data.get_coord(axis);
+                    let b = (*b).data.get_coord(axis);
                     a.partial_cmp(&b).unwrap()
                 }
             });
 
             // Finds the maximum value of `mid` such that `points[mid] == median`.
-            while let Some(upper) = nodes.get(mid + 1) {
+            while let Some(&upper) = nodes.get(mid + 1) {
                 unsafe {
-                    let mid_point = nodes[mid].as_ref().data.point();
-                    let upper = upper.as_ref().data.point();
+                    let mid_point = (*nodes[mid]).data.point();
+                    let upper = (*upper).data.point();
                     // Going one upper would change the value at the `mid` index, so `mid` is right where we want.
                     if upper != mid_point {
                         break;
@@ -196,26 +208,29 @@ where
 
             // This `unwrap` is ok because right has elements from indices [mid, len) and we know that `mid` is
             // a valid index (there has to be at least one element in `points`).
-            let (&mut mut median, right) = right.split_first_mut().unwrap();
+            let (&mut median, right) = right.split_first_mut().unwrap();
 
             unsafe {
-                median.as_mut().left = rec_rebuild(left, depth + 1);
-                median.as_mut().right = rec_rebuild(right, depth + 1);
+                (*median).left.set(rec_rebuild(left, depth + 1));
+                (*median).right.set(rec_rebuild(right, depth + 1));
             }
 
             Some(median)
         }
 
-        let mut nodes: Box<[_]> = self.alloc.iter_mut().map(NonNull::from).collect();
-        self.root = rec_rebuild(nodes.as_mut(), 0);
+        let mut nodes: Box<[_]> = self.node_iter()
+            .map(|node| node as *const _)
+            .collect();
+
+        self.root.set(rec_rebuild(&mut nodes, 0));
     }
 }
 
 #[derive(Debug)]
-pub struct Node<P, const N: usize> {
+struct Node<P, const N: usize> {
     data: P,
-    left: Option<NonNull<Node<P, N>>>,
-    right: Option<NonNull<Node<P, N>>>,
+    left: Cell<Option<*const Node<P, N>>>,
+    right: Cell<Option<*const Node<P, N>>>,
 }
 
 impl<P, const N: usize> Node<P, N>
@@ -225,27 +240,27 @@ where
     fn new(data: P) -> Self {
         Node {
             data,
-            left: None,
-            right: None,
+            left: Cell::new(None),
+            right: Cell::new(None),
         }
     }
 
     /// SAFETY: The caller must guarantee that `node` and `self` are valid as well as all of the
     /// children of `self`.
-    unsafe fn insert(&mut self, node: NonNull<Node<P, N>>, depth: usize) {
+    unsafe fn insert(&self, node: *const Node<P, N>, depth: usize) {
         let axis = depth % N;
         let median = &self.data;
 
-        if node.as_ref().data.get_coord(axis) <= median.get_coord(axis) {
-            if let Some(mut child) = self.left {
-                child.as_mut().insert(node, depth + 1);
+        if (*node).data.get_coord(axis) <= median.get_coord(axis) {
+            if let Some(child) = self.left.get() {
+                (*child).insert(node, depth + 1);
             } else {
-                self.left.replace(node);
+                self.left.set(Some(node));
             }
-        } else if let Some(mut child) = self.right {
-            child.as_mut().insert(node, depth + 1);
+        } else if let Some(child) = self.right.get() {
+            (*child).insert(node, depth + 1);
         } else {
-            self.right.replace(node);
+            self.right.set(Some(node));
         }
     }
 
@@ -273,13 +288,13 @@ where
 
         // We first follow the axis comparison to get a first candidate of nearest point.
         let (fst, snd) = if is_left {
-            (self.left, self.right)
+            (self.left.get(), self.right.get())
         } else {
-            (self.right, self.left)
+            (self.right.get(), self.left.get())
         };
 
         if let Some(child) = fst {
-            child.as_ref().query(visitor, p, depth + 1);
+            (*child).query(visitor, p, depth + 1);
         }
 
         if na::distance_squared(&median.point(), &p.point()) <= visitor.radius_sq(p) {
@@ -288,7 +303,7 @@ where
 
         if visitor.radius_sq(p) > (p_ax - m_ax).abs().powi(2) {
             if let Some(child) = snd {
-                child.as_ref().query(visitor, p, depth + 1);
+                (*child).query(visitor, p, depth + 1);
             }
         }
     }
@@ -297,8 +312,8 @@ where
     // since they will all be consumed by the function. The caller must also guarantee that `self`
     // and all of its children are valid.
     unsafe fn extend_slice(
-        &mut self,
-        allocator: &typed_arena::Arena<Self>,
+        &self,
+        mk_node: &impl Fn(P) -> *const Self,
         points: &mut [ManuallyDrop<P>],
         depth: usize,
     ) {
@@ -315,26 +330,26 @@ where
         let mid = points.partition_point(|p| p.get_coord(axis) <= m_ax);
         let (left, right) = points.split_at_mut(mid);
 
-        if let Some(mut child) = self.left {
-            child.as_mut().extend_slice(allocator, left, depth + 1);
+        if let Some(child) = self.left.get() {
+            (*child).extend_slice(mk_node, left, depth + 1);
         } else {
-            self.left = Node::from_slice(allocator, left, depth + 1);
+            self.left.set(Node::from_slice(mk_node, left, depth + 1));
         }
 
-        if let Some(mut child) = self.right {
-            child.as_mut().extend_slice(allocator, right, depth + 1);
+        if let Some(child) = self.right.get() {
+            (*child).extend_slice(mk_node, right, depth + 1);
         } else {
-            self.right = Node::from_slice(allocator, right, depth + 1);
+            self.right.set(Node::from_slice(mk_node, right, depth + 1));
         }
     }
 
     // SAFETY: The caller of this function CANNOT drop any of the values in the `points` slice,
     // since they will all be consumed by the function.
     fn from_slice(
-        allocator: &typed_arena::Arena<Self>,
+        mk_node: &impl Fn(P) -> *const Self,
         points: &mut [ManuallyDrop<P>],
         depth: usize,
-    ) -> Option<NonNull<Node<P, N>>>
+    ) -> Option<*const Node<P, N>>
     {
         if points.is_empty() {
             return None;
@@ -366,23 +381,23 @@ where
         // The caller of this function must know not to drop this value.
         let median = unsafe { ManuallyDrop::take(median) };
 
-        let node = allocator.alloc(Node::new(median));
+        let node = mk_node(median);
 
-        node.left = Node::from_slice(allocator, left, depth + 1);
-        node.right = Node::from_slice(allocator, right, depth + 1);
+        unsafe {
+            (*node).left.set(Node::from_slice(mk_node, left, depth + 1));
+            (*node).right.set(Node::from_slice(mk_node, right, depth + 1));
+        }
 
-        Some(NonNull::from(node))
+        Some(node)
     }
 
     /// SAFETY: The caller must guarantee that `self` and all of its children are valid.
     unsafe fn depth(&self, depth: usize) -> usize {
-        self.left
-            .map(|left| left.as_ref().depth(depth + 1))
-            .and_then(|left_depth| {
-                self.right
-                    .map(|right| right.as_ref().depth(depth + 1))
-                    .map(|right_depth| right_depth.max(left_depth))
-            })
+        self.left.get()
+            .into_iter()
+            .chain(self.right.get())
+            .map(|node| (*node).depth(depth + 1))
+            .max()
             .unwrap_or(depth)
     }
 }

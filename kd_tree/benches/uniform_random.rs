@@ -19,7 +19,7 @@ fn kd_tree_uniform_build(c: &mut Criterion) {
     c.bench_function(
         "kd_tree_uniform_build",
         |b| b.iter(|| {
-            let mut tree = KDTree::new();
+            let tree = KDTree::new();
             tree.extend_vec(points.clone());
         }),
     );
@@ -27,7 +27,7 @@ fn kd_tree_uniform_build(c: &mut Criterion) {
 
 fn kd_tree_uniform_query(c: &mut Criterion) {
     let n = 100_000;
-    let mut tree = KDTree::new();
+    let tree = KDTree::new();
     tree.extend_vec(gen_points(n).collect());
     // assert_eq!(n, tree.size());
 
@@ -48,7 +48,7 @@ fn kd_tree_uniform_insert(c: &mut Criterion) {
         BenchmarkId::new("kd_tree_uniform_insert", n),
         &n,
         |b, &n| b.iter(|| {
-            let mut tree = KDTree::new();
+            let tree = KDTree::new();
             for _ in 0..n {
                 tree.insert(gen_point());
             }
