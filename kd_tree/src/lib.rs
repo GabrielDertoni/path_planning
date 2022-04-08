@@ -1,4 +1,4 @@
-#![feature(allocator_api, slice_ptr_get, ptr_as_uninit)]
+#![feature(allocator_api, slice_ptr_get, ptr_as_uninit, iter_partition_in_place)]
 
 #[cfg(feature = "display")]
 pub mod display;
@@ -129,7 +129,7 @@ where
             // SAFETY: All nodes are valid.
             unsafe { (*root).extend_slice(&|p| self.alloc_node(p), slice, 0); }
         } else {
-            Node::from_slice(&|p| self.alloc_node(p), slice, 0);
+            self.root.set(Node::from_slice(&|p| self.alloc_node(p), slice, 0));
         }
     }
 
@@ -180,35 +180,18 @@ where
                 return None;
             }
 
-            let mut mid = nodes.len() / 2;
+            let mid = nodes.len() / 2;
             let axis = depth % N;
 
-            nodes.sort_unstable_by(|&a, &b| {
-                unsafe {
-                    let a = (*a).data.get_coord(axis);
-                    let b = (*b).data.get_coord(axis);
-                    a.partial_cmp(&b).unwrap()
+            let (left, &mut median, right) = nodes.select_nth_unstable_by(
+                mid,
+                |&a, &b| unsafe {
+                    (*a).data
+                        .get_coord(axis)
+                        .partial_cmp(&(*b).data.get_coord(axis))
+                        .unwrap()
                 }
-            });
-
-            // Finds the maximum value of `mid` such that `points[mid] == median`.
-            while let Some(&upper) = nodes.get(mid + 1) {
-                unsafe {
-                    let mid_point = (*nodes[mid]).data.point();
-                    let upper = (*upper).data.point();
-                    // Going one upper would change the value at the `mid` index, so `mid` is right where we want.
-                    if upper != mid_point {
-                        break;
-                    }
-                }
-                mid += 1;
-            }
-
-            let (left, right) = nodes.split_at_mut(mid);
-
-            // This `unwrap` is ok because right has elements from indices [mid, len) and we know that `mid` is
-            // a valid index (there has to be at least one element in `points`).
-            let (&mut median, right) = right.split_first_mut().unwrap();
+            );
 
             unsafe {
                 (*median).left.set(rec_rebuild(left, depth + 1));
@@ -324,10 +307,7 @@ where
         let median = &self.data;
         let m_ax = median.get_coord(axis);
 
-        // Lots of unwraps... Maybe there is a better way.
-        points.sort_unstable_by(|a, b| a.get_coord(axis).partial_cmp(&b.get_coord(axis)).unwrap());
-
-        let mid = points.partition_point(|p| p.get_coord(axis) <= m_ax);
+        let mid = points.iter_mut().partition_in_place(|p| p.get_coord(axis) <= m_ax);
         let (left, right) = points.split_at_mut(mid);
 
         if let Some(child) = self.left.get() {
@@ -345,6 +325,7 @@ where
 
     // SAFETY: The caller of this function CANNOT drop any of the values in the `points` slice,
     // since they will all be consumed by the function.
+    #[must_use]
     fn from_slice(
         mk_node: &impl Fn(P) -> *const Self,
         points: &mut [ManuallyDrop<P>],
@@ -356,26 +337,13 @@ where
         }
 
         let axis = depth % N;
+        let mid = points.len() / 2;
 
         // Lots of unwraps... Maybe there is a better way.
-        points.sort_unstable_by(|a, b| a.get_coord(axis).partial_cmp(&b.get_coord(axis)).unwrap());
-
-        let mut mid = points.len() / 2;
-
-        // Finds the maximum value of `mid` such that `points[mid] == median`.
-        while let Some(upper) = points.get(mid + 1) {
-            // Going one upper would change the value at the `mid` index, so `mid` is right where we want.
-            if upper.point() != points[mid].point() {
-                break;
-            }
-            mid += 1;
-        }
-
-        let (left, right) = points.split_at_mut(mid);
-
-        // This `unwrap` is ok because right has elements from indices [mid, len) and we know that `mid` is
-        // a valid index (there has to be at least one element in `points`).
-        let (median, right) = right.split_first_mut().unwrap();
+        let (left, median, right) = points.select_nth_unstable_by(
+            mid,
+            |a, b| a.get_coord(axis).partial_cmp(&b.get_coord(axis)).unwrap()
+        );
 
         // SAFETY: We have split the slice, so it's not possible to access this element again in the slice.
         // The caller of this function must know not to drop this value.

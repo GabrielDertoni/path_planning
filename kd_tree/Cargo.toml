@@ -20,3 +20,7 @@ display = [ "ptree" ]
 [[bench]]
 name = "uniform_random"
 harness = false
+
+[[bench]]
+name = "kdtree-rust"
+harness = false
